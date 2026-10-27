@@ -16,6 +16,7 @@ import {
   type PeerInfo,
   type Ping,
   type Pong,
+  type Preview,
   type Role,
   type Snapshot,
   type Toast,
@@ -28,7 +29,6 @@ const MAX_GHOST_PEERS = 2;
 const MAX_NAME = 24;
 const MAX_CHAT = 240;
 const MAX_CMD_ID = 64;
-const MAX_WHISPER = 180;
 const RATE_PER_SECOND = 80;
 const RATE_BURST = 160;
 const COOLDOWN_TOLERANCE_MS = 250;
@@ -93,7 +93,7 @@ function sanitizeArgs(input: unknown): CmdArgs {
   const kind = cleanText(raw.kind, 24);
   if (kind) args.kind = kind;
 
-  for (const key of ["x", "y", "z", "power", "duration", "distance", "fuse"] as const) {
+  for (const key of ["x", "y", "z", "dirX", "dirZ", "power", "duration", "fuse"] as const) {
     const value = finite(raw[key]);
     if (value !== undefined) args[key] = clamp(value, -10_000, 10_000);
   }
@@ -101,10 +101,6 @@ function sanitizeArgs(input: unknown): CmdArgs {
   const targetId = finite(raw.targetId);
   if (targetId !== undefined) args.targetId = Math.trunc(targetId);
 
-  const text = cleanText(raw.text, MAX_WHISPER);
-  if (text) args.text = text;
-
-  if (typeof raw.behind === "boolean") args.behind = raw.behind;
   const mode = cleanText(raw.mode, 24);
   if (mode) args.mode = mode;
 
@@ -133,7 +129,6 @@ export class Room {
   lastSnapshotAt = 0;
   energy: number | null = null;
   maxEnergy = 100;
-  chaos: number | null = null;
   readonly cooldownUntil = new Map<string, number>();
 
   /** Cache for late joiners / reconnects. */
@@ -277,6 +272,9 @@ export class Room {
       case "cmd":
         this.handleCmd(peer, message);
         return;
+      case "preview":
+        this.handlePreview(peer, message);
+        return;
       case "camera":
         this.handleCamera(peer, message);
         return;
@@ -320,9 +318,6 @@ export class Room {
     }
     if (typeof snapshot.maxEnergy === "number" && Number.isFinite(snapshot.maxEnergy)) {
       this.maxEnergy = snapshot.maxEnergy;
-    }
-    if (typeof snapshot.chaos === "number" && Number.isFinite(snapshot.chaos)) {
-      this.chaos = snapshot.chaos;
     }
     if (isRecord(snapshot.cooldowns)) {
       this.cooldownUntil.clear();
@@ -377,11 +372,6 @@ export class Room {
       return;
     }
 
-    if (this.chaos !== null && def.minChaos > 0 && this.chaos + 0.5 < def.minChaos) {
-      this.send(peer, this.ack(id, false, "low_chaos"));
-      return;
-    }
-
     const cmd: Cmd = {
       t: "cmd",
       id,
@@ -394,6 +384,65 @@ export class Room {
     logger.debug("room", `${this.code} cmd ${ability} ${id} -> game`);
   }
 
+  private handlePreview(peer: Peer, message: Record<string, unknown>): void {
+    if (peer.role !== "ghost") return;
+    const game = this.gamePeer;
+    if (!game) return;
+
+    const ability =
+      typeof message.ability === "string" && isAbilityId(message.ability) ? message.ability : null;
+    const active = message.active === true && ability !== null;
+
+    if (!active || ability === null) {
+      this.send(game, {
+        t: "preview",
+        active: false,
+        ability: null,
+        pos: { x: 0, y: 0, z: 0 },
+        ts: Date.now(),
+      } satisfies Preview);
+      return;
+    }
+
+    const pos = isRecord(message.pos) ? message.pos : {};
+    const x = finite(pos.x);
+    const y = finite(pos.y);
+    const z = finite(pos.z);
+    if (x === undefined || y === undefined || z === undefined) return;
+
+    let dir: { x: number; y: number; z: number } | undefined;
+    if (isRecord(message.dir)) {
+      const dx = finite(message.dir.x);
+      const dz = finite(message.dir.z);
+      if (dx !== undefined && dz !== undefined) {
+        const length = Math.hypot(dx, dz);
+        if (length > 0.0001) {
+          dir = { x: dx / length, y: 0, z: dz / length };
+        }
+      }
+    }
+
+    const kind = cleanText(message.kind, 24);
+    const enemyKind =
+      kind === "grunt" || kind === "runner" || kind === "shooter" || kind === "heavy"
+        ? kind
+        : undefined;
+
+    this.send(game, {
+      t: "preview",
+      active: true,
+      ability,
+      pos: {
+        x: clamp(x, -10_000, 10_000),
+        y: clamp(y, -10_000, 10_000),
+        z: clamp(z, -10_000, 10_000),
+      },
+      dir,
+      kind: enemyKind,
+      ts: Date.now(),
+    } satisfies Preview);
+  }
+
   private handleCamera(peer: Peer, message: Record<string, unknown>): void {
     if (peer.role !== "ghost") return;
     const game = this.gamePeer;
@@ -404,12 +453,14 @@ export class Room {
     const y = finite(pos.y);
     const z = finite(pos.z);
     const yaw = finite(message.yaw);
+    const pitch = finite(message.pitch);
     if (x === undefined || z === undefined) return;
 
     this.send(game, {
       t: "camera",
       pos: { x: clamp(x, -10_000, 10_000), y: clamp(y ?? 0, -10_000, 10_000), z: clamp(z, -10_000, 10_000) },
       yaw: yaw ?? 0,
+      pitch: pitch ?? 0,
       ts: Date.now(),
     });
   }

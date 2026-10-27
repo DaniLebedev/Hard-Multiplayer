@@ -1,11 +1,17 @@
 /**
- * Hard Multiplayer wire protocol (v1).
+ * Hard Multiplayer wire protocol (v2).
  *
  * Source of truth for both the browser client and the BepInEx mod.
  * Keep `shared/csharp/Protocol.cs` in sync when changing messages.
+ *
+ * v2 changes:
+ *  - ghost flies in 3D (camera carries pitch, map carries Y and floor level);
+ *  - abilities announce an intent via `preview` before they are cast;
+ *  - barrels fly along an explicit direction;
+ *  - chaos meter and whisper ability were removed.
  */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type Role = "game" | "ghost";
 
@@ -20,8 +26,7 @@ export type AbilityId =
   | "throw_barrel"
   | "telekinesis"
   | "poltergeist"
-  | "manifest"
-  | "whisper";
+  | "manifest";
 
 export type EnemyKind = "grunt" | "runner" | "shooter" | "heavy";
 
@@ -33,7 +38,6 @@ export interface AbilityDef {
   cooldown: number;
   hotkey: string;
   targeting: "point" | "entity" | "self" | "none";
-  minChaos: number;
   description: string;
   color: string;
 }
@@ -47,9 +51,8 @@ export const ABILITIES: Record<AbilityId, AbilityDef> = {
     cooldown: 8,
     hotkey: "1",
     targeting: "point",
-    minChaos: 0,
     description:
-      "Создать врага в точке. Если включён режим «за спиной», точка смещается за игрока.",
+      "Поставить голограмму врага. Пока голограмма горит, игрок видит, где появится враг. ЛКМ — материализовать.",
     color: "#ff5d5d",
   },
   throw_barrel: {
@@ -60,8 +63,8 @@ export const ABILITIES: Record<AbilityId, AbilityDef> = {
     cooldown: 4,
     hotkey: "2",
     targeting: "point",
-    minChaos: 0,
-    description: "Уронить горящую бочку в точку. Взрывается через несколько секунд.",
+    description:
+      "Поставить голограмму бочки. Стрелка показывает, куда она полетит. ЛКМ — бросить.",
     color: "#ffb347",
   },
   telekinesis: {
@@ -72,7 +75,6 @@ export const ABILITIES: Record<AbilityId, AbilityDef> = {
     cooldown: 2,
     hotkey: "3",
     targeting: "entity",
-    minChaos: 0,
     description: "Дёрнуть ближайший предмет или врага в сторону игрока.",
     color: "#7dd3fc",
   },
@@ -84,7 +86,6 @@ export const ABILITIES: Record<AbilityId, AbilityDef> = {
     cooldown: 6,
     hotkey: "4",
     targeting: "point",
-    minChaos: 0,
     description: "Мигание света, хлопанье дверью, падающие предметы. Отвлекает и пугает.",
     color: "#c084fc",
   },
@@ -96,24 +97,19 @@ export const ABILITIES: Record<AbilityId, AbilityDef> = {
     cooldown: 20,
     hotkey: "5",
     targeting: "self",
-    minChaos: 15,
     description:
-      "Стать видимым на несколько секунд. Сильный страх, но игрок может заметить и атаковать призрака.",
+      "Стать видимым на несколько секунд. Игрок может заметить и атаковать призрака.",
     color: "#f472b6",
   },
-  whisper: {
-    id: "whisper",
-    name: "Шёпот",
-    short: "ШЁПОТ",
-    cost: 5,
-    cooldown: 10,
-    hotkey: "6",
-    targeting: "none",
-    minChaos: 0,
-    description: "Прошептать фразу игроку. Голос звучит пространственно рядом с ним.",
-    color: "#a3e635",
-  },
 };
+
+/** Abilities that show a hologram of the future action. */
+export const PREVIEW_ABILITIES: AbilityId[] = [
+  "spawn_enemy",
+  "throw_barrel",
+  "telekinesis",
+  "poltergeist",
+];
 
 export const ENEMY_KINDS: { id: EnemyKind; name: string; note: string }[] = [
   { id: "grunt", name: "Ближний", note: "Обычный враг с оружием ближнего боя" },
@@ -218,7 +214,6 @@ export interface Snapshot {
   props: PropState[];
   energy: number;
   maxEnergy: number;
-  chaos: number;
   cooldowns: Record<string, number>;
   stats: Stats;
 }
@@ -231,11 +226,14 @@ export interface MapBounds {
 }
 
 export interface MapWall {
+  /** Centre of the box. */
   x: number;
+  y: number;
   z: number;
+  /** Size along world axes. */
   w: number;
-  d: number;
   h: number;
+  d: number;
 }
 
 export interface MapImage {
@@ -253,6 +251,8 @@ export interface MapData {
   t: "map";
   scene: string;
   bounds: MapBounds;
+  /** World Y of the floor the ghost should not fly below. */
+  floorY: number;
   walls: MapWall[];
   image?: MapImage;
 }
@@ -296,12 +296,12 @@ export interface CmdArgs {
   x?: number;
   y?: number;
   z?: number;
+  /** Horizontal direction for flying props (normalized by the mod). */
+  dirX?: number;
+  dirZ?: number;
   targetId?: number;
   power?: number;
   duration?: number;
-  text?: string;
-  behind?: boolean;
-  distance?: number;
   fuse?: number;
   mode?: string;
 }
@@ -323,10 +323,27 @@ export interface Ack {
   cooldown?: number;
 }
 
+/**
+ * Ghost intent preview. The mod renders a hologram in the game world and the
+ * browser renders the same thing locally, so the VR player can react before
+ * the ability is actually used.
+ */
+export interface Preview {
+  t: "preview";
+  active: boolean;
+  ability: AbilityId | null;
+  pos: Vec3;
+  /** Flight direction for throw_barrel (horizontal, normalized). */
+  dir?: Vec3;
+  kind?: EnemyKind;
+  ts: number;
+}
+
 export interface CameraMsg {
   t: "camera";
   pos: Vec3;
   yaw: number;
+  pitch: number;
   ts: number;
 }
 
@@ -342,7 +359,22 @@ export interface Chat {
   ts: number;
 }
 
-export type ClientMessage = Hello | Cmd | CameraMsg | Ping | Chat | Snapshot | MapData | GameEvent | Toast | Ack | Pong | Welcome | PeerEvent | ErrorMessage;
+export type ClientMessage =
+  | Hello
+  | Cmd
+  | Preview
+  | CameraMsg
+  | Ping
+  | Chat
+  | Snapshot
+  | MapData
+  | GameEvent
+  | Toast
+  | Ack
+  | Pong
+  | Welcome
+  | PeerEvent
+  | ErrorMessage;
 
 export function isAbilityId(value: string): value is AbilityId {
   return value in ABILITIES;

@@ -4,7 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#05070c" />
-    <meta name="description" content="Hard Multiplayer — консоль призрака для асимметричного мультиплеера в Hard Bullet" />
+    <meta
+      name="description"
+      content="Hard Multiplayer — призрак от первого лица для асимметричного мультиплеера в Hard Bullet"
+    />
     <title>Hard Multiplayer — Ghost Console</title>
   </head>
   <body>
@@ -16,7 +19,7 @@
           </div>
           <div class="brand-text">
             <div class="brand-title">HARD MULTIPLAYER</div>
-            <div class="brand-sub">GHOST CONSOLE <b>v1</b></div>
+            <div class="brand-sub">GHOST CONSOLE <b>v2 · 3D</b></div>
           </div>
         </div>
 
@@ -33,6 +36,10 @@
             <span class="chip-label">PING</span>
             <span class="chip-value mono" id="latency">—</span>
           </div>
+          <div class="chip scene-chip">
+            <span class="chip-label">СЦЕНА</span>
+            <span class="chip-value mono" id="scene-name">—</span>
+          </div>
         </div>
 
         <div class="topbar-right">
@@ -43,27 +50,23 @@
       </header>
 
       <main class="layout">
-        <section class="map-panel">
-          <canvas id="map" aria-label="Тактическая карта"></canvas>
+        <section class="map-panel" id="view-panel">
+          <div id="view" aria-label="Вид от первого лица"></div>
 
           <div class="map-top">
             <div class="scene-badge">
-              <span class="scene-label">СЦЕНА</span>
-              <span class="scene-name" id="scene-name">—</span>
+              <span class="scene-label">ПРИЗРАК · 3D</span>
+              <span class="scene-name" id="scene-name-view">СВОБОДНЫЙ ПОЛЁТ</span>
             </div>
             <div class="map-actions">
-              <button class="mini-btn" id="reset-view" title="Сбросить вид">СБРОС ВИДА</button>
+              <button class="mini-btn" id="recenter-btn" title="Вернуться к игроку">
+                К ИГРОКУ <kbd>R</kbd>
+              </button>
             </div>
           </div>
 
-          <div class="map-bottom">
-            <div class="map-hint" id="map-hint">
-              <span><b>ЛКМ</b> применить</span>
-              <span><b>ПКМ</b> панорама</span>
-              <span><b>Колесо</b> зум</span>
-              <span><b>WASD</b> движение</span>
-            </div>
-            <div class="aim-readout mono" id="aim-readout">X — · Z —</div>
+          <div class="crosshair" aria-hidden="true">
+            <span></span>
           </div>
 
           <div class="player-vitals">
@@ -72,7 +75,23 @@
               <span class="mono" id="player-hp-text">—</span>
             </div>
             <div class="bar hp"><i id="player-hp"></i></div>
+            <div class="vitals-head">
+              <span>СОСТОЯНИЕ</span>
+              <span class="ghost-state" id="ghost-state">СКРЫТ</span>
+            </div>
           </div>
+
+          <div class="view-footer">
+            <span><kbd>WASD</kbd> полёт</span>
+            <span><kbd>SPACE</kbd>/<kbd>C</kbd> вверх/вниз</span>
+            <span><kbd>SHIFT</kbd> ускорение</span>
+            <span><kbd>ЛКМ</kbd> применить</span>
+            <span><kbd>1–5</kbd> способность</span>
+          </div>
+
+          <div class="aim-readout mono" id="aim-readout">нет поверхности</div>
+
+          <div class="lock-hint" id="lock-hint">Кликни по окну, чтобы захватить мышь</div>
 
           <div class="no-map" id="no-map">
             <div class="no-map-icon">◇</div>
@@ -88,11 +107,7 @@
               <span class="mono" id="energy-text">— / —</span>
             </div>
             <div class="bar energy"><i id="energy-bar"></i></div>
-            <div class="panel-head">
-              <span>ХАОС</span>
-              <span class="mono" id="chaos-text">0%</span>
-            </div>
-            <div class="bar chaos"><i id="chaos-bar"></i></div>
+            <div class="energy-note">Восстанавливается со временем. Тратится на способности.</div>
           </section>
 
           <section class="panel stats-panel">
@@ -113,22 +128,16 @@
           <section class="panel ghost-panel">
             <div class="panel-head">
               <span>ПРИЗРАК</span>
-              <span class="ghost-state" id="ghost-state">СКРЫТ</span>
+              <span class="mono">СВОБОДНЫЙ ПОЛЁТ</span>
             </div>
             <div class="ghost-grid">
               <label class="field">
-                <span>Тип врага</span>
+                <span>Тип врага для спавна</span>
                 <select id="enemy-kind"></select>
               </label>
-              <label class="switch">
-                <input type="checkbox" id="behind-toggle" />
-                <span class="switch-track"><i></i></span>
-                <span class="switch-text">За спиной</span>
-              </label>
-              <label class="field wide">
-                <span>Шёпот</span>
-                <input id="whisper-text" maxlength="120" placeholder="фраза для игрока..." autocomplete="off" />
-              </label>
+              <div class="ghost-tip">
+                Игрок видит голограмму до применения.
+              </div>
             </div>
           </section>
         </aside>
@@ -143,7 +152,7 @@
           </div>
           <button class="cast-btn" id="cast-btn">
             <span>ПРИМЕНИТЬ</span>
-            <kbd>Space</kbd>
+            <kbd>ЛКМ</kbd>
           </button>
         </div>
       </footer>
@@ -156,8 +165,8 @@
         <div class="lobby-kicker">АСИММЕТРИЧНЫЙ МУЛЬТИПЛЕЕР</div>
         <h1>СТАНЬ ПРИЗРАКОМ</h1>
         <p class="lobby-lead">
-          Друг играет в Hard Bullet в VR. Ты управляешь призраком с телефона или ноутбука:
-          спавнишь врагов за спиной, роняешь бочки и пугаешь его.
+          Друг играет в Hard Bullet в VR. Ты летаешь по его карте от первого лица,
+          ставишь голограммы и пугаешь его. Игрок видит твои намерения до удара.
         </p>
 
         <form id="lobby-form" class="lobby-form">
@@ -200,21 +209,21 @@
         <div class="lobby-kicker">ПАМЯТКА</div>
         <h2>УПРАВЛЕНИЕ</h2>
         <div class="help-grid">
-          <div><kbd>1</kbd>–<kbd>6</kbd></div><div>Выбрать способность</div>
-          <div><kbd>Space</kbd></div><div>Применить в точку прицела</div>
-          <div><kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>6</kbd></div><div>Применить сразу</div>
-          <div><kbd>ЛКМ</kbd></div><div>Применить в точку на карте</div>
-          <div><kbd>ПКМ</kbd> + перетаскивание</div><div>Панорама карты</div>
-          <div><kbd>Колесо</kbd></div><div>Зум</div>
-          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Движение призрака</div>
-          <div><kbd>Q</kbd><kbd>E</kbd></div><div>Поворот призрака</div>
-          <div><kbd>R</kbd></div><div>Сбросить вид</div>
-          <div><kbd>Esc</kbd></div><div>Сбросить прицел</div>
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Лететь вперёд/назад/в стороны</div>
+          <div><kbd>Space</kbd></div><div>Подняться выше</div>
+          <div><kbd>C</kbd></div><div>Опуститься ниже</div>
+          <div><kbd>Shift</kbd></div><div>Ускорение</div>
+          <div><kbd>Мышь</kbd></div><div>Осмотреться (после клика по окну)</div>
+          <div><kbd>1</kbd>–<kbd>5</kbd></div><div>Выбрать способность</div>
+          <div><kbd>ЛКМ</kbd></div><div>Применить способность</div>
+          <div><kbd>R</kbd></div><div>Вернуться к игроку</div>
           <div><kbd>M</kbd></div><div>Звук вкл/выкл</div>
+          <div><kbd>H</kbd></div><div>Эта памятка</div>
+          <div><kbd>Esc</kbd></div><div>Отпустить мышь</div>
         </div>
         <div class="help-tip">
-          Призрак невидим. Энергия восстанавливается со временем, хаос растёт от испугов.
-          Манифестация делает тебя видимым — это рискованно.
+          Голограмма — твоё намерение. Игрок видит её в VR и может успеть среагировать.
+          Стрелка у бочки показывает, куда она полетит. Призрак проходит сквозь стены.
         </div>
       </div>
     </div>

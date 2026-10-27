@@ -11,12 +11,10 @@ export interface UIActions {
   select: (id: AbilityId) => void;
   leave: () => void;
   toggleSound: () => void;
-  resetView: () => void;
+  recenter: () => void;
   connect: (room: string, name: string) => void;
   newRoom: () => string;
-  setBehind: (value: boolean) => void;
   setEnemyKind: (kind: EnemyKind) => void;
-  setWhisper: (value: string) => void;
 }
 
 interface AbilityCard {
@@ -58,13 +56,12 @@ export class UI {
   private readonly statusText = $("status-text");
   private readonly latency = $("latency");
   private readonly sceneName = $("scene-name");
+  private readonly sceneNameView = $("scene-name-view");
   private readonly noMap = $("no-map");
   private readonly playerHpText = $("player-hp-text");
   private readonly playerHp = $("player-hp");
   private readonly energyText = $("energy-text");
   private readonly energyBar = $("energy-bar");
-  private readonly chaosText = $("chaos-text");
-  private readonly chaosBar = $("chaos-bar");
   private readonly statSpawns = $("stat-spawns");
   private readonly statBarrels = $("stat-barrels");
   private readonly statScares = $("stat-scares");
@@ -76,8 +73,6 @@ export class UI {
   private readonly castDesc = $("cast-desc");
   private readonly castButton = $<HTMLButtonElement>("cast-btn");
   private readonly enemyKind = $<HTMLSelectElement>("enemy-kind");
-  private readonly behindToggle = $<HTMLInputElement>("behind-toggle");
-  private readonly whisperText = $<HTMLInputElement>("whisper-text");
   private readonly lobby = $("lobby");
   private readonly lobbyForm = $<HTMLFormElement>("lobby-form");
   private readonly lobbyName = $<HTMLInputElement>("lobby-name");
@@ -147,7 +142,7 @@ export class UI {
 
   private bind(): void {
     this.castButton.addEventListener("click", () => this.actions.cast());
-    $("reset-view").addEventListener("click", () => this.actions.resetView());
+    $("recenter-btn").addEventListener("click", () => this.actions.recenter());
     $("leave-btn").addEventListener("click", () => this.actions.leave());
     this.soundButton.addEventListener("click", () => this.actions.toggleSound());
     $("help-btn").addEventListener("click", () => this.showHelp(true));
@@ -158,14 +153,6 @@ export class UI {
 
     this.enemyKind.addEventListener("change", () => {
       this.actions.setEnemyKind(this.enemyKind.value as EnemyKind);
-    });
-
-    this.behindToggle.addEventListener("change", () => {
-      this.actions.setBehind(this.behindToggle.checked);
-    });
-
-    this.whisperText.addEventListener("input", () => {
-      this.actions.setWhisper(this.whisperText.value);
     });
 
     this.lobbyForm.addEventListener("submit", (event) => {
@@ -199,7 +186,9 @@ export class UI {
     this.statusChip.dataset.status = store.status;
     this.statusText.textContent = store.statusText;
     this.latency.textContent = store.latency === null ? "—" : `${Math.round(store.latency)} ms`;
-    this.sceneName.textContent = store.map?.scene || snapshot?.scene || "—";
+    const scene = store.map?.scene || snapshot?.scene || "—";
+    this.sceneName.textContent = scene;
+    this.sceneNameView.textContent = store.map ? "СВОБОДНЫЙ ПОЛЁТ" : "ОЖИДАНИЕ КАРТЫ";
     this.noMap.classList.toggle("hidden", Boolean(store.map));
 
     const hp = snapshot?.player.hp ?? 0;
@@ -211,10 +200,6 @@ export class UI {
     const maxEnergy = store.maxEnergy();
     this.energyText.textContent = snapshot ? `${Math.round(energy)} / ${Math.round(maxEnergy)}` : "— / —";
     this.energyBar.style.width = `${maxEnergy > 0 ? Math.min(100, (energy / maxEnergy) * 100) : 0}%`;
-
-    const chaos = Math.min(100, Math.max(0, store.chaos()));
-    this.chaosText.textContent = `${Math.round(chaos)}%`;
-    this.chaosBar.style.width = `${chaos}%`;
 
     const stats = snapshot?.stats;
     this.statSpawns.textContent = String(stats?.spawns ?? 0);
@@ -237,19 +222,9 @@ export class UI {
 
     const def = ABILITIES[store.selected];
     this.castName.textContent = def.name;
-    const extra =
-      def.id === "spawn_enemy" && store.behind
-        ? " Точка сместится за спину игрока."
-        : def.id === "whisper" && store.whisper
-          ? ` Фраза: «${store.whisper}»`
-          : "";
-    this.castDesc.textContent = def.description + extra;
+    this.castDesc.textContent = def.description;
 
     if (this.enemyKind.value !== store.enemyKind) this.enemyKind.value = store.enemyKind;
-    if (this.behindToggle.checked !== store.behind) this.behindToggle.checked = store.behind;
-    if (document.activeElement !== this.whisperText && this.whisperText.value !== store.whisper) {
-      this.whisperText.value = store.whisper;
-    }
 
     this.soundButton.classList.toggle("active", !store.muted);
     this.soundButton.textContent = store.muted ? "∅" : "♪";

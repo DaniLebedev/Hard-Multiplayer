@@ -282,22 +282,17 @@ button {
   mix-blend-mode: screen;
 }
 
-#map {
+#view {
   position: absolute;
   inset: 0;
+}
+
+#view-canvas {
   width: 100%;
   height: 100%;
   display: block;
   cursor: crosshair;
   touch-action: none;
-}
-
-#map.dragging {
-  cursor: grabbing;
-}
-
-#map.aiming {
-  cursor: crosshair;
 }
 
 .map-top,
@@ -395,6 +390,15 @@ button {
 }
 
 .aim-readout {
+  position: absolute;
+  right: 14px;
+  bottom: 52px;
+  z-index: 2;
+  pointer-events: none;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -403,6 +407,106 @@ button {
   font-size: 9px;
   letter-spacing: 0.1em;
   backdrop-filter: blur(8px);
+}
+
+.view-footer {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(5, 9, 16, 0.66);
+  backdrop-filter: blur(8px);
+  color: var(--muted-2);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.view-footer kbd {
+  color: var(--muted);
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.crosshair span {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(125, 211, 252, 0.8);
+  border-radius: 50%;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.45);
+}
+
+.crosshair::before,
+.crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(125, 211, 252, 0.75);
+}
+
+.crosshair::before {
+  left: 50%;
+  top: -7px;
+  width: 1px;
+  height: 6px;
+  transform: translateX(-50%);
+}
+
+.crosshair::after {
+  left: 50%;
+  bottom: -7px;
+  width: 1px;
+  height: 6px;
+  transform: translateX(-50%);
+}
+
+.lock-hint {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(5, 9, 16, 0.8);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.energy-note,
+.ghost-tip {
+  margin-top: 8px;
+  color: var(--muted-2);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.ghost-tip {
+  margin-top: 2px;
+}
+
+.player-vitals .vitals-head + .vitals-head {
+  margin-top: 9px;
 }
 
 .player-vitals {
@@ -649,7 +753,7 @@ button {
 
 .ghost-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: end;
 }
@@ -772,7 +876,7 @@ button {
 
 .ability-list {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -985,10 +1089,11 @@ button {
 
 .toasts {
   position: fixed;
-  top: 70px;
-  right: 16px;
+  left: 16px;
+  bottom: 104px;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   z-index: 50;
   pointer-events: none;
@@ -1384,7 +1489,7 @@ kbd {
     z-index: 4;
   }
   .ability-list {
-    grid-template-columns: repeat(6, minmax(64px, 1fr));
+    grid-template-columns: repeat(5, minmax(64px, 1fr));
     overflow-x: auto;
     padding-bottom: 2px;
   }
@@ -1402,6 +1507,9 @@ kbd {
   }
   .map-hint {
     display: none;
+  }
+  .toasts {
+    bottom: 190px;
   }
 }
 

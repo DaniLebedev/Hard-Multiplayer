@@ -2,12 +2,12 @@ using System.Collections.Generic;
 
 namespace HardMultiplayer.Protocol;
 
-// Wire protocol v1. Mirrors shared/ts/protocol.ts.
+// Wire protocol v2. Mirrors shared/ts/protocol.ts.
 // Serialized with JsonNamingPolicy.CamelCase and null values ignored.
 
 public static class ProtocolVersion
 {
-    public const int Current = 1;
+    public const int Current = 2;
 }
 
 public sealed class Vec3
@@ -121,7 +121,6 @@ public sealed class Snapshot
     public List<PropState> Props { get; set; } = new();
     public float Energy { get; set; }
     public float MaxEnergy { get; set; } = 100f;
-    public float Chaos { get; set; }
     public Dictionary<string, float> Cooldowns { get; set; } = new();
     public Stats Stats { get; set; } = new();
 }
@@ -137,10 +136,11 @@ public sealed class MapBounds
 public sealed class MapWall
 {
     public float X { get; set; }
+    public float Y { get; set; }
     public float Z { get; set; }
     public float W { get; set; }
-    public float D { get; set; }
     public float H { get; set; }
+    public float D { get; set; }
 }
 
 public sealed class MapImage
@@ -160,6 +160,7 @@ public sealed class MapData
     public string T { get; set; } = "map";
     public string Scene { get; set; } = "";
     public MapBounds Bounds { get; set; } = new();
+    public float FloorY { get; set; }
     public List<MapWall> Walls { get; set; } = new();
     public MapImage? Image { get; set; }
 }
@@ -191,12 +192,11 @@ public sealed class CmdArgs
     public float? X { get; set; }
     public float? Y { get; set; }
     public float? Z { get; set; }
+    public float? DirX { get; set; }
+    public float? DirZ { get; set; }
     public int? TargetId { get; set; }
     public float? Power { get; set; }
     public float? Duration { get; set; }
-    public string? Text { get; set; }
-    public bool? Behind { get; set; }
-    public float? Distance { get; set; }
     public float? Fuse { get; set; }
     public string? Mode { get; set; }
 }
@@ -220,11 +220,23 @@ public sealed class Ack
     public float? Cooldown { get; set; }
 }
 
+public sealed class Preview
+{
+    public string T { get; set; } = "preview";
+    public bool Active { get; set; }
+    public string? Ability { get; set; }
+    public Vec3? Pos { get; set; }
+    public Vec3? Dir { get; set; }
+    public string? Kind { get; set; }
+    public long Ts { get; set; }
+}
+
 public sealed class CameraMsg
 {
     public string T { get; set; } = "camera";
     public Vec3 Pos { get; set; } = Vec3.Zero;
     public float Yaw { get; set; }
+    public float Pitch { get; set; }
     public long Ts { get; set; }
 }
 
@@ -247,18 +259,16 @@ public sealed class AbilityDef
     public string Id { get; init; } = "";
     public float Cost { get; init; }
     public float Cooldown { get; init; }
-    public float MinChaos { get; init; }
 }
 
 public static class Abilities
 {
     public static readonly IReadOnlyDictionary<string, AbilityDef> All = new Dictionary<string, AbilityDef>
     {
-        ["spawn_enemy"] = new() { Id = "spawn_enemy", Cost = 25f, Cooldown = 8f, MinChaos = 0f },
-        ["throw_barrel"] = new() { Id = "throw_barrel", Cost = 15f, Cooldown = 4f, MinChaos = 0f },
-        ["telekinesis"] = new() { Id = "telekinesis", Cost = 10f, Cooldown = 2f, MinChaos = 0f },
-        ["poltergeist"] = new() { Id = "poltergeist", Cost = 8f, Cooldown = 6f, MinChaos = 0f },
-        ["manifest"] = new() { Id = "manifest", Cost = 30f, Cooldown = 20f, MinChaos = 15f },
-        ["whisper"] = new() { Id = "whisper", Cost = 5f, Cooldown = 10f, MinChaos = 0f },
+        ["spawn_enemy"] = new() { Id = "spawn_enemy", Cost = 25f, Cooldown = 8f },
+        ["throw_barrel"] = new() { Id = "throw_barrel", Cost = 15f, Cooldown = 4f },
+        ["telekinesis"] = new() { Id = "telekinesis", Cost = 10f, Cooldown = 2f },
+        ["poltergeist"] = new() { Id = "poltergeist", Cost = 8f, Cooldown = 6f },
+        ["manifest"] = new() { Id = "manifest", Cost = 30f, Cooldown = 20f },
     };
 }

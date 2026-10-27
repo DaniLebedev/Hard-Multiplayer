@@ -2,7 +2,6 @@ import { WebSocket } from "ws";
 import {
   ABILITIES,
   PROTOCOL_VERSION,
-  isAbilityId,
   type AbilityId,
   type Ack,
   type CameraMsg,
@@ -13,6 +12,7 @@ import {
   type MapData,
   type MapWall,
   type PlayerState,
+  type Preview,
   type PropState,
   type Snapshot,
   type Toast,
@@ -29,23 +29,32 @@ const ROOM = (args.get("room") ?? process.env.ROOM ?? "TEST").toUpperCase();
 const RELAY = args.get("relay") ?? process.env.RELAY_URL ?? "ws://127.0.0.1:8080/ws";
 const NAME = args.get("name") ?? "Mock VR";
 
+const FLOOR_Y = 0;
+
+function wall(x: number, y: number, z: number, w: number, h: number, d: number): MapWall {
+  return { x, y, z, w, h, d };
+}
+
 const WALLS: MapWall[] = [
-  { x: 0, z: 30, w: 60, d: 1, h: 4 },
-  { x: 0, z: -30, w: 60, d: 1, h: 4 },
-  { x: 30, z: 0, w: 1, d: 60, h: 4 },
-  { x: -30, z: 0, w: 1, d: 60, h: 4 },
-  { x: -12, z: 8, w: 6, d: 5, h: 2.5 },
-  { x: 10, z: -7, w: 7, d: 4, h: 2.2 },
-  { x: 2, z: 16, w: 10, d: 1.2, h: 1.8 },
-  { x: -18, z: -12, w: 4, d: 8, h: 3 },
-  { x: 17, z: 12, w: 5, d: 5, h: 2.8 },
-  { x: 0, z: -2, w: 2, d: 2, h: 1.4 },
+  wall(0, 2, 30, 60, 4, 1),
+  wall(0, 2, -30, 60, 4, 1),
+  wall(30, 2, 0, 1, 4, 60),
+  wall(-30, 2, 0, 1, 4, 60),
+  wall(-12, 1.25, 8, 6, 2.5, 5),
+  wall(10, 1.1, -7, 7, 2.2, 4),
+  wall(2, 0.9, 16, 10, 1.8, 1.2),
+  wall(-18, 1.5, -12, 4, 3, 8),
+  wall(17, 1.4, 12, 5, 2.8, 5),
+  wall(0, 0.7, -2, 2, 1.4, 2),
+  wall(-8, 0.6, -16, 8, 1.2, 1),
+  wall(14, 0.6, 2, 1, 1.2, 9),
 ];
 
 const MAP: MapData = {
   t: "map",
   scene: "mock_arena",
   bounds: { minX: -30, minZ: -30, maxX: 30, maxZ: 30 },
+  floorY: FLOOR_Y,
   walls: WALLS,
 };
 
@@ -59,7 +68,11 @@ const ENEMY_HP: Record<EnemyKind, number> = {
 interface Barrel {
   id: number;
   x: number;
+  y: number;
   z: number;
+  vx: number;
+  vy: number;
+  vz: number;
   fuse: number;
   radius: number;
 }
@@ -67,14 +80,14 @@ interface Barrel {
 const state = {
   scene: "mock_arena",
   player: {
-    pos: { x: 0, y: 0, z: 0 },
+    pos: { x: 0, y: FLOOR_Y, z: 0 },
     yaw: 0,
     vel: { x: 0, y: 0, z: 0 },
     hp: 100,
     alive: true,
   } as PlayerState,
   ghost: {
-    pos: { x: 0, y: 0, z: -6 },
+    pos: { x: 0, y: 1.6, z: -6 },
     yaw: 0,
     manifested: false,
     stunned: false,
@@ -84,7 +97,6 @@ const state = {
   barrels: [] as Barrel[],
   energy: 100,
   maxEnergy: 100,
-  chaos: 0,
   cooldowns: {} as Record<string, number>,
   stats: { scares: 0, kills: 0, spawns: 0, barrels: 0, sessionTime: 0 },
   seq: 0,
@@ -102,7 +114,7 @@ for (let i = 0; i < 18; i += 1) {
     kind: i % 3 === 0 ? "crate" : i % 3 === 1 ? "bottle" : "chair",
     pos: {
       x: Math.sin(angle) * (8 + (i % 5) * 3),
-      y: 0,
+      y: FLOOR_Y + 0.25,
       z: Math.cos(angle) * (8 + (i % 7) * 2),
     },
     mass: i % 3 === 0 ? 18 : 1.2,
@@ -155,7 +167,6 @@ function snapshot(): Snapshot {
     props: state.props,
     energy: state.energy,
     maxEnergy: state.maxEnergy,
-    chaos: state.chaos,
     cooldowns: state.cooldowns,
     stats: state.stats,
   };
@@ -173,7 +184,7 @@ function spawnEnemy(kind: EnemyKind, x: number, z: number, ghost: boolean): Enem
   const enemy: EnemyState = {
     id: state.nextId++,
     kind,
-    pos: { x: clamp(x, -28, 28), y: 0, z: clamp(z, -28, 28) },
+    pos: { x: clamp(x, -28, 28), y: FLOOR_Y, z: clamp(z, -28, 28) },
     hp: ENEMY_HP[kind],
     state: "chase",
     ghost,
@@ -199,68 +210,54 @@ function applyCmd(cmd: Cmd): void {
     sendAck(cmd.id, false, "cooldown");
     return;
   }
-  if (state.chaos + 0.5 < def.minChaos) {
-    sendAck(cmd.id, false, "low_chaos");
-    return;
-  }
 
   state.energy = Math.max(0, state.energy - def.cost);
   state.cooldowns[cmd.ability] = def.cooldown;
 
   const px = cmd.args.x ?? state.player.pos.x;
+  const py = cmd.args.y ?? FLOOR_Y;
   const pz = cmd.args.z ?? state.player.pos.z;
 
   switch (cmd.ability) {
     case "spawn_enemy": {
       const kind = (cmd.args.kind as EnemyKind) ?? "grunt";
-      let x = px;
-      let z = pz;
-      if (cmd.args.behind) {
-        const dist = cmd.args.distance ?? 6;
-        x = state.player.pos.x - Math.sin(state.player.yaw) * dist;
-        z = state.player.pos.z - Math.cos(state.player.yaw) * dist;
-      }
-      spawnEnemy(kind in ENEMY_HP ? kind : "grunt", x, z, true);
-      state.chaos = Math.min(100, state.chaos + 4);
+      spawnEnemy(kind in ENEMY_HP ? kind : "grunt", px, pz, true);
       break;
     }
     case "throw_barrel": {
+      const dirX = cmd.args.dirX ?? 0;
+      const dirZ = cmd.args.dirZ ?? 1;
+      const length = Math.hypot(dirX, dirZ) || 1;
+      const speed = clamp(cmd.args.power ?? 14, 4, 30);
       state.barrels.push({
         id: state.nextId++,
         x: clamp(px, -28, 28),
+        y: Math.max(FLOOR_Y + 0.4, py),
         z: clamp(pz, -28, 28),
-        fuse: cmd.args.fuse ?? 3,
+        vx: (dirX / length) * speed,
+        vy: 2.2,
+        vz: (dirZ / length) * speed,
+        fuse: clamp(cmd.args.fuse ?? 3, 1, 10),
         radius: 6,
       });
       state.stats.barrels += 1;
-      state.chaos = Math.min(100, state.chaos + 5);
       sendEvent("info", { text: "Бочка брошена." });
       break;
     }
     case "telekinesis": {
       state.stats.scares += 1;
-      state.chaos = Math.min(100, state.chaos + 3);
       sendEvent("scare", { text: "Предмет дёрнулся." });
       break;
     }
     case "poltergeist": {
       state.stats.scares += 1;
-      state.chaos = Math.min(100, state.chaos + 6);
       sendEvent("scare", { text: "Свет мигнул, что-то упало." });
       break;
     }
     case "manifest": {
       state.ghost.manifested = true;
       state.manifestUntil = Date.now() + (cmd.args.duration ?? 8) * 1000;
-      state.chaos = Math.min(100, state.chaos + 10);
       sendEvent("manifest_start", { duration: cmd.args.duration ?? 8 });
-      break;
-    }
-    case "whisper": {
-      state.stats.scares += 1;
-      state.chaos = Math.min(100, state.chaos + 3);
-      sendEvent("scare", { text: `Шёпот: «${cmd.args.text ?? "..."}»` });
-      log("whisper:", cmd.args.text);
       break;
     }
     default:
@@ -268,6 +265,13 @@ function applyCmd(cmd: Cmd): void {
   }
 
   sendAck(cmd.id, true);
+}
+
+function applyPreview(preview: Preview): void {
+  log(
+    "preview:",
+    preview.active ? `${preview.ability} @ ${preview.pos.x.toFixed(1)},${preview.pos.y.toFixed(1)},${preview.pos.z.toFixed(1)}` : "off",
+  );
 }
 
 function tick(): void {
@@ -279,7 +283,11 @@ function tick(): void {
     playerPhase += dt;
     const nx = Math.sin(playerPhase * 0.33) * 9;
     const nz = Math.cos(playerPhase * 0.21) * 7;
-    state.player.vel = { x: (nx - state.player.pos.x) / Math.max(dt, 0.001), y: 0, z: (nz - state.player.pos.z) / Math.max(dt, 0.001) };
+    state.player.vel = {
+      x: (nx - state.player.pos.x) / Math.max(dt, 0.001),
+      y: 0,
+      z: (nz - state.player.pos.z) / Math.max(dt, 0.001),
+    };
     state.player.pos.x = nx;
     state.player.pos.z = nz;
     if (Math.hypot(state.player.vel.x, state.player.vel.z) > 0.1) {
@@ -296,7 +304,6 @@ function tick(): void {
   }
 
   state.energy = Math.min(state.maxEnergy, state.energy + 4.5 * dt);
-  state.chaos = Math.max(0, state.chaos - 0.35 * dt);
 
   for (const [ability, remaining] of Object.entries(state.cooldowns)) {
     const next = remaining - dt;
@@ -330,6 +337,18 @@ function tick(): void {
   }
 
   for (const barrel of state.barrels) {
+    barrel.vy -= 9.8 * dt;
+    barrel.x += barrel.vx * dt;
+    barrel.y += barrel.vy * dt;
+    barrel.z += barrel.vz * dt;
+
+    if (barrel.y < FLOOR_Y + 0.45) {
+      barrel.y = FLOOR_Y + 0.45;
+      barrel.vy = Math.abs(barrel.vy) * 0.28;
+      barrel.vx *= 0.72;
+      barrel.vz *= 0.72;
+    }
+
     barrel.fuse -= dt;
     if (barrel.fuse <= 0) {
       const dist = distance(barrel.x, barrel.z, state.player.pos.x, state.player.pos.z);
@@ -345,7 +364,12 @@ function tick(): void {
         }
       }
       state.stats.scares += 1;
-      sendEvent("barrel_exploded", { x: barrel.x, z: barrel.z, radius: barrel.radius });
+      sendEvent("barrel_exploded", {
+        x: barrel.x,
+        y: barrel.y,
+        z: barrel.z,
+        radius: barrel.radius,
+      });
       barrel.fuse = Number.POSITIVE_INFINITY;
     }
   }
@@ -359,7 +383,10 @@ function tick(): void {
     state.ghost.stunned = false;
     sendEvent("info", { text: "Призрак пришёл в себя." });
   }
-  if (state.ghost.manifested && distance(state.ghost.pos.x, state.ghost.pos.z, state.player.pos.x, state.player.pos.z) < 1.6) {
+  if (
+    state.ghost.manifested &&
+    distance(state.ghost.pos.x, state.ghost.pos.z, state.player.pos.x, state.player.pos.z) < 1.6
+  ) {
     state.ghost.stunned = true;
     state.ghost.manifested = false;
     state.stunnedUntil = now + 5000;
@@ -409,6 +436,9 @@ function connect(): void {
         break;
       case "cmd":
         applyCmd(msg as unknown as Cmd);
+        break;
+      case "preview":
+        applyPreview(msg as unknown as Preview);
         break;
       case "camera": {
         const camera = msg as unknown as CameraMsg;

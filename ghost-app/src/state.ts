@@ -32,6 +32,15 @@ export interface ToastMessage {
   level: "info" | "warn" | "good";
 }
 
+export interface AimState {
+  x: number;
+  y: number;
+  z: number;
+  groundY: number;
+  distance: number;
+  valid: boolean;
+}
+
 let nextId = 1;
 
 export class Store {
@@ -53,14 +62,13 @@ export class Store {
   toasts: ToastMessage[] = [];
 
   selected: AbilityId = "spawn_enemy";
-  aim: { x: number; z: number; valid: boolean } = { x: 0, z: 0, valid: false };
-  behind = false;
+  aim: AimState = { x: 0, y: 0, z: 0, groundY: 0, distance: 0, valid: false };
   enemyKind: EnemyKind = "grunt";
-  whisper = "";
   muted = false;
+  locked = false;
 
   /** Locally predicted ghost transform, so the marker does not lag by 100 ms. */
-  ghostLocal: { pos: Vec3; yaw: number } | null = null;
+  ghostLocal: { pos: Vec3; yaw: number; pitch: number } | null = null;
 
   localEnergy = 100;
   localCooldowns = new Map<AbilityId, number>();
@@ -96,12 +104,12 @@ export class Store {
     this.snapshot = snapshot;
     this.snapshotAt = performance.now();
 
-    if (this.localCooldowns.size === 0) {
-      this.localEnergy = snapshot.energy;
-    }
-
     if (!this.ghostLocal && snapshot.ghost) {
-      this.ghostLocal = { pos: { ...snapshot.ghost.pos }, yaw: snapshot.ghost.yaw };
+      this.ghostLocal = {
+        pos: { ...snapshot.ghost.pos },
+        yaw: snapshot.ghost.yaw,
+        pitch: 0,
+      };
     }
 
     if (this.pending.size === 0) {
@@ -165,10 +173,6 @@ export class Store {
     return this.snapshot?.maxEnergy ?? 100;
   }
 
-  chaos(): number {
-    return this.snapshot?.chaos ?? 0;
-  }
-
   cooldownRemaining(ability: AbilityId): number {
     const server = this.snapshot?.cooldowns?.[ability] ?? 0;
     const localUntil = this.localCooldowns.get(ability) ?? 0;
@@ -180,7 +184,6 @@ export class Store {
     const def = ABILITIES[ability];
     if (this.cooldownRemaining(ability) > 0.05) return false;
     if (this.energyNow() + 0.5 < def.cost) return false;
-    if (this.chaos() + 0.5 < def.minChaos) return false;
     return true;
   }
 

@@ -12,6 +12,7 @@ import {
   type MapData,
   type PeerEvent,
   type Pong,
+  type Preview,
   type Snapshot,
   type Toast,
   type Vec3,
@@ -50,6 +51,7 @@ export class Net {
   private handshakeTimer: number | null = null;
   private queuedCmds: Cmd[] = [];
   private pendingCamera: CameraMsg | null = null;
+  private pendingPreview: Preview | null = null;
 
   constructor(private readonly store: Store) {}
 
@@ -332,10 +334,17 @@ export class Net {
       if (this.queuedCmds.length > MAX_QUEUED_CMDS) this.queuedCmds.shift();
     } else if (message.t === "camera") {
       this.pendingCamera = message;
+    } else if (message.t === "preview") {
+      this.pendingPreview = message;
     }
   }
 
   private flushQueue(): void {
+    if (this.pendingPreview) {
+      const preview = this.pendingPreview;
+      this.pendingPreview = null;
+      this.send(preview);
+    }
     if (this.pendingCamera) {
       const camera = this.pendingCamera;
       this.pendingCamera = null;
@@ -353,8 +362,26 @@ export class Net {
     return id;
   }
 
-  sendCamera(pos: Vec3, yaw: number): void {
-    this.send({ t: "camera", pos, yaw, ts: Date.now() });
+  sendCamera(pos: Vec3, yaw: number, pitch: number): void {
+    this.send({ t: "camera", pos, yaw, pitch, ts: Date.now() });
+  }
+
+  sendPreview(
+    active: boolean,
+    ability: AbilityId | null,
+    pos: Vec3,
+    dir?: Vec3,
+    kind?: string,
+  ): void {
+    this.send({
+      t: "preview",
+      active,
+      ability,
+      pos,
+      dir,
+      kind: kind as Preview["kind"],
+      ts: Date.now(),
+    });
   }
 
   sendChat(text: string): void {
@@ -372,8 +399,6 @@ function ackErrorText(code?: string): string {
       return "Не хватает энергии";
     case "cooldown":
       return "Способность ещё перезаряжается";
-    case "low_chaos":
-      return "Слишком низкий хаос";
     case "unknown_ability":
       return "Неизвестная способность";
     case "bad_id":

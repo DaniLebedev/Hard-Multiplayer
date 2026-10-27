@@ -1,35 +1,48 @@
 import "./styles.css";
-import { ABILITIES, roomCode, type AbilityId, type CmdArgs, type GameEvent } from "@hm/protocol";
+import {
+  ABILITIES,
+  PREVIEW_ABILITIES,
+  roomCode,
+  type AbilityId,
+  type CmdArgs,
+  type GameEvent,
+  type Vec3,
+} from "@hm/protocol";
 import { AudioEngine } from "./audio";
 import { Net } from "./net";
-import { MapRenderer } from "./render";
 import { Store } from "./state";
 import { UI } from "./ui";
-
-const WHISPERS = [
-  "Я вижу тебя.",
-  "Не оборачивайся.",
-  "Ты слышишь это?",
-  "Здесь кто-то есть.",
-  "Останься со мной.",
-  "Ты не один.",
-  "Оно уже близко.",
-  "Не выключай свет.",
-];
+import { World } from "./world";
 
 const store = new Store();
 const audio = new AudioEngine();
 const net = new Net(store);
 
-const canvas = document.getElementById("map") as HTMLCanvasElement;
+const viewContainer = document.getElementById("view")!;
 const aimReadout = document.getElementById("aim-readout")!;
+const lockHint = document.getElementById("lock-hint")!;
 
-const renderer = new MapRenderer(canvas, store, {
-  onCast: (x, z) => cast(x, z),
-  onAim: (x, z, inside) => {
-    store.aim = { x, z, valid: inside };
-    aimReadout.textContent = inside ? `X ${x.toFixed(1)} · Z ${z.toFixed(1)}` : "X — · Z —";
+const world = new World(viewContainer, store, {
+  onAim: (aim) => {
+    store.aim = {
+      x: aim.pos.x,
+      y: aim.pos.y,
+      z: aim.pos.z,
+      groundY: aim.groundY,
+      distance: aim.distance,
+      valid: aim.valid,
+    };
+    aimReadout.textContent = aim.valid
+      ? `${aim.distance.toFixed(1)} м · X ${aim.pos.x.toFixed(1)} · Y ${aim.pos.y.toFixed(1)} · Z ${aim.pos.z.toFixed(1)}`
+      : "нет поверхности";
   },
+  onCast: () => cast(),
+  onLockChange: (locked) => {
+    store.locked = locked;
+    lockHint.classList.toggle("hidden", locked);
+    store.emit();
+  },
+  canControl: () => !ui.isLobbyOpen() && !ui.isHelpOpen(),
 });
 
 const ui = new UI(store, {
@@ -37,19 +50,15 @@ const ui = new UI(store, {
   select: (id) => selectAbility(id),
   leave: () => leave(),
   toggleSound: () => toggleSound(),
-  resetView: () => renderer.resetView(),
+  recenter: () => {
+    world.resetToPlayer();
+    store.notifyToast("Призрак вернулся к игроку.", "info");
+  },
   connect: (room, name) => connect(room, name),
   newRoom: () => roomCode(),
-  setBehind: (value) => {
-    store.behind = value;
-    store.emit();
-  },
   setEnemyKind: (kind) => {
     store.enemyKind = kind;
     store.emit();
-  },
-  setWhisper: (value) => {
-    store.whisper = value;
   },
 });
 
@@ -89,6 +98,7 @@ function leave(): void {
   store.map = null;
   store.mapImage = null;
   store.ghostLocal = null;
+  world.resetGhost();
   ui.setLobbyBusy(false);
   ui.showLobby(true);
   ui.setLobbyValues(localStorage.getItem("hm.room") ?? "", localStorage.getItem("hm.name") ?? "");
@@ -107,7 +117,7 @@ function selectAbility(id: AbilityId): void {
   audio.play("click");
 }
 
-function cast(x?: number, z?: number): void {
+function cast(): void {
   if (ui.isLobbyOpen() || ui.isHelpOpen()) return;
   if (!net.connected) {
     store.notifyToast("Нет соединения с relay.", "warn");
@@ -127,89 +137,80 @@ function cast(x?: number, z?: number): void {
     audio.play("error");
     return;
   }
-  if (store.chaos() + 0.5 < def.minChaos) {
-    store.notifyToast(`Нужен хаос ${def.minChaos}%.`, "warn");
-    audio.play("error");
-    return;
-  }
 
-  const point = resolvePoint(x, z);
+  const aim = world.getAim();
+  const transform = world.getTransform();
   const args: CmdArgs = {};
+
+  if (def.targeting === "point" || def.targeting === "entity") {
+    if (!aim.valid) {
+      store.notifyToast("Наведись на пол или стену.", "warn");
+      audio.play("error");
+      return;
+    }
+    args.x = aim.pos.x;
+    args.y = aim.pos.y;
+    args.z = aim.pos.z;
+  }
 
   switch (def.id) {
     case "spawn_enemy": {
-      let px = point.x;
-      let pz = point.z;
-
-      // The "behind" toggle is a shortcut for Space/Shift+1..6. A click on the
-      // map still spawns exactly where the player clicked.
-      if (store.behind && x === undefined && z === undefined) {
-        const player = store.snapshot?.player;
-        if (player) {
-          px = player.pos.x - Math.sin(player.yaw) * 6;
-          pz = player.pos.z - Math.cos(player.yaw) * 6;
-        }
-      }
-
       args.kind = store.enemyKind;
-      args.x = px;
-      args.z = pz;
-      args.behind = store.behind;
-      args.distance = 6;
       break;
     }
     case "throw_barrel": {
-      args.x = point.x;
-      args.z = point.z;
+      args.dirX = Math.sin(transform.yaw);
+      args.dirZ = Math.cos(transform.yaw);
+      args.power = 14;
       args.fuse = 3;
       break;
     }
     case "telekinesis": {
-      args.x = point.x;
-      args.z = point.z;
-      const enemy = nearestEnemy(point.x, point.z, 2.5);
+      const enemy = nearestEnemy(aim.pos, 3.5);
       if (enemy !== null) args.targetId = enemy;
       break;
     }
     case "poltergeist": {
-      args.x = point.x;
-      args.z = point.z;
       break;
     }
     case "manifest": {
-      break;
-    }
-    case "whisper": {
-      args.text = store.whisper.trim() || WHISPERS[Math.floor(Math.random() * WHISPERS.length)]!;
+      args.duration = 6;
       break;
     }
   }
 
   net.sendCmd(def.id, args);
-  store.addLog("info", `→ ${def.name}${def.targeting === "point" ? ` (${point.x.toFixed(1)}, ${point.z.toFixed(1)})` : ""}`);
-  audio.play(def.id === "spawn_enemy" ? "spawn" : def.id === "throw_barrel" ? "barrel" : def.id === "manifest" ? "manifest" : def.id === "whisper" ? "whisper" : "scare");
+  sendPreview(false);
+  world.hidePreview();
+
+  const where = def.targeting === "point" || def.targeting === "entity"
+    ? ` (${aim.pos.x.toFixed(1)}, ${aim.pos.y.toFixed(1)}, ${aim.pos.z.toFixed(1)})`
+    : "";
+  store.addLog("info", `→ ${def.name}${where}`);
+  audio.play(
+    def.id === "spawn_enemy"
+      ? "spawn"
+      : def.id === "throw_barrel"
+        ? "barrel"
+        : def.id === "manifest"
+          ? "manifest"
+          : "scare",
+  );
 }
 
-function resolvePoint(x?: number, z?: number): { x: number; z: number } {
-  if (x !== undefined && z !== undefined && Number.isFinite(x) && Number.isFinite(z)) {
-    return { x, z };
-  }
-  if (store.aim.valid) return { x: store.aim.x, z: store.aim.z };
-  const player = store.snapshot?.player.pos;
-  if (player) return { x: player.x, z: player.z };
-  const ghost = store.ghostLocal?.pos ?? store.snapshot?.ghost.pos;
-  if (ghost) return { x: ghost.x, z: ghost.z };
-  return { x: 0, z: 0 };
-}
-
-function nearestEnemy(x: number, z: number, maxDistance: number): number | null {
+function nearestEnemy(point: Vec3, maxDistance: number): number | null {
   const enemies = store.snapshot?.enemies;
   if (!enemies) return null;
+
   let best: number | null = null;
   let bestDistance = maxDistance;
   for (const enemy of enemies) {
     if (enemy.state === "dead") continue;
-    const distance = Math.hypot(enemy.pos.x - x, enemy.pos.z - z);
+    const distance = Math.hypot(
+      enemy.pos.x - point.x,
+      enemy.pos.y - point.y,
+      enemy.pos.z - point.z,
+    );
     if (distance < bestDistance) {
       best = enemy.id;
       bestDistance = distance;
@@ -219,12 +220,72 @@ function nearestEnemy(x: number, z: number, maxDistance: number): number | null 
 }
 
 // ---------------------------------------------------------------------------
-// Ghost movement
+// Preview / camera uplink
 // ---------------------------------------------------------------------------
 
-const keys = new Set<string>();
-let lastMoveAt = performance.now();
+let previewActive = false;
+let lastPreviewAt = 0;
 let lastCameraAt = 0;
+
+function sendPreview(active: boolean): void {
+  if (!active) {
+    if (!previewActive) return;
+    previewActive = false;
+    net.sendPreview(false, null, { x: 0, y: 0, z: 0 });
+    return;
+  }
+
+  const ability = store.selected;
+  const aim = world.getAim();
+  if (!net.connected || !PREVIEW_ABILITIES.includes(ability) || !aim.valid) {
+    if (previewActive) sendPreview(false);
+    return;
+  }
+  if (store.cooldownRemaining(ability) > 0.05) {
+    if (previewActive) sendPreview(false);
+    return;
+  }
+
+  const transform = world.getTransform();
+  const dir =
+    ability === "throw_barrel"
+      ? { x: Math.sin(transform.yaw), y: 0, z: Math.cos(transform.yaw) }
+      : undefined;
+
+  previewActive = true;
+  net.sendPreview(true, ability, aim.pos, dir, store.enemyKind);
+}
+
+window.setInterval(() => {
+  const now = performance.now();
+
+  if (net.connected) {
+    if (now - lastCameraAt > 90) {
+      lastCameraAt = now;
+      const transform = world.getTransform();
+      net.sendCamera(transform.pos, transform.yaw, transform.pitch);
+    }
+
+    if (now - lastPreviewAt > 100) {
+      lastPreviewAt = now;
+      const ability = store.selected;
+      const aim = world.getAim();
+      const shouldPreview =
+        PREVIEW_ABILITIES.includes(ability) &&
+        aim.valid &&
+        store.cooldownRemaining(ability) <= 0.05;
+      sendPreview(shouldPreview);
+    }
+  } else if (previewActive) {
+    sendPreview(false);
+  }
+
+  store.clearStalePending();
+}, 50);
+
+// ---------------------------------------------------------------------------
+// Keyboard
+// ---------------------------------------------------------------------------
 
 function isTyping(): boolean {
   const active = document.activeElement;
@@ -243,38 +304,17 @@ window.addEventListener("keydown", (event) => {
 
   const key = event.key;
   const lower = key.toLowerCase();
-  keys.add(lower);
-  if (key === "Shift") keys.add("shift");
 
-  if (key >= "1" && key <= "6") {
+  if (key >= "1" && key <= "5") {
     const def = Object.values(ABILITIES)[Number(key) - 1];
     if (!def) return;
     selectAbility(def.id);
-    if (event.shiftKey) cast();
     event.preventDefault();
-    return;
-  }
-
-  if (key === " " || key === "Enter") {
-    cast();
-    event.preventDefault();
-    return;
-  }
-
-  if (key === "Escape") {
-    if (ui.isHelpOpen()) {
-      ui.showHelp(false);
-    } else if (ui.isLobbyOpen()) {
-      return;
-    } else {
-      store.aim = { ...store.aim, valid: false };
-      aimReadout.textContent = "X — · Z —";
-    }
     return;
   }
 
   if (lower === "r") {
-    renderer.resetView();
+    world.resetToPlayer();
     return;
   }
 
@@ -288,96 +328,11 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (["w", "a", "s", "d", "q", "e", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(lower)) {
-    event.preventDefault();
+  if (key === "Escape") {
+    if (ui.isHelpOpen()) ui.showHelp(false);
+    return;
   }
 });
-
-window.addEventListener("keyup", (event) => {
-  const key = event.key;
-  keys.delete(key.toLowerCase());
-  if (key === "Shift") keys.delete("shift");
-});
-
-window.addEventListener("blur", () => keys.clear());
-
-window.setInterval(() => {
-  const now = performance.now();
-  const dt = Math.min(0.12, (now - lastMoveAt) / 1000);
-  lastMoveAt = now;
-
-  if (ui.isLobbyOpen() || ui.isHelpOpen() || !store.snapshot) return;
-  if (!store.ghostLocal) {
-    store.ghostLocal = {
-      pos: { ...store.snapshot.ghost.pos },
-      yaw: store.snapshot.ghost.yaw,
-    };
-  }
-
-  const ghost = store.ghostLocal;
-  if (!ghost) return;
-
-  const fast = keys.has("shift");
-  const speed = fast ? 22 : 9;
-  const yaw = ghost.yaw;
-  const forward = { x: Math.sin(yaw), z: Math.cos(yaw) };
-  const right = { x: Math.cos(yaw), z: -Math.sin(yaw) };
-
-  let mx = 0;
-  let mz = 0;
-  if (keys.has("w") || keys.has("arrowup")) {
-    mx += forward.x;
-    mz += forward.z;
-  }
-  if (keys.has("s") || keys.has("arrowdown")) {
-    mx -= forward.x;
-    mz -= forward.z;
-  }
-  if (keys.has("d") || keys.has("arrowright")) {
-    mx += right.x;
-    mz += right.z;
-  }
-  if (keys.has("a") || keys.has("arrowleft")) {
-    mx -= right.x;
-    mz -= right.z;
-  }
-
-  let yawDelta = 0;
-  if (keys.has("q")) yawDelta -= 1;
-  if (keys.has("e")) yawDelta += 1;
-  if (yawDelta !== 0) {
-    ghost.yaw = normalizeAngle(ghost.yaw + yawDelta * 1.9 * dt);
-  }
-
-  const length = Math.hypot(mx, mz);
-  if (length > 0.001) {
-    mx /= length;
-    mz /= length;
-    const bounds = store.map?.bounds;
-    const margin = 0.6;
-    const minX = (bounds?.minX ?? -30) + margin;
-    const maxX = (bounds?.maxX ?? 30) - margin;
-    const minZ = (bounds?.minZ ?? -30) + margin;
-    const maxZ = (bounds?.maxZ ?? 30) - margin;
-    ghost.pos.x = clamp(ghost.pos.x + mx * speed * dt, minX, maxX);
-    ghost.pos.z = clamp(ghost.pos.z + mz * speed * dt, minZ, maxZ);
-    ghost.pos.y = store.snapshot.player.pos.y;
-  }
-
-  if (net.connected && (now - lastCameraAt > 90 || length > 0.001 || yawDelta !== 0)) {
-    lastCameraAt = now;
-    net.sendCamera(ghost.pos, ghost.yaw);
-  }
-}, 50);
-
-function normalizeAngle(value: number): number {
-  const twoPi = Math.PI * 2;
-  return ((value % twoPi) + twoPi) % twoPi;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 // ---------------------------------------------------------------------------
 // Sound / events
@@ -432,6 +387,10 @@ const initialRoom = (params.get("room") ?? localStorage.getItem("hm.room") ?? ""
 const initialName = localStorage.getItem("hm.name") ?? "";
 ui.setLobbyValues(initialRoom, initialName);
 ui.setSoundEnabled(!store.muted);
+
+if (params.has("debug")) {
+  (window as unknown as { __hm?: unknown }).__hm = { store, world, net };
+}
 
 store.subscribe(() => {
   if (store.status === "online" && ui.isLobbyOpen()) {
