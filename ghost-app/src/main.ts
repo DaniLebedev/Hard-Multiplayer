@@ -138,9 +138,22 @@ function cast(x?: number, z?: number): void {
 
   switch (def.id) {
     case "spawn_enemy": {
+      let px = point.x;
+      let pz = point.z;
+
+      // The "behind" toggle is a shortcut for Space/Shift+1..6. A click on the
+      // map still spawns exactly where the player clicked.
+      if (store.behind && x === undefined && z === undefined) {
+        const player = store.snapshot?.player;
+        if (player) {
+          px = player.pos.x - Math.sin(player.yaw) * 6;
+          pz = player.pos.z - Math.cos(player.yaw) * 6;
+        }
+      }
+
       args.kind = store.enemyKind;
-      args.x = point.x;
-      args.z = point.z;
+      args.x = px;
+      args.z = pz;
       args.behind = store.behind;
       args.distance = 6;
       break;

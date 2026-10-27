@@ -324,20 +324,25 @@ public sealed class GhostDirector : MonoBehaviour
             }
 
             case "manifest":
-                _game.SetGhostPosition(position);
-                ok = _game.Manifest(position, args.Duration ?? 6f);
+            {
+                // Manifestation is the only self-targeted ability: use the ghost's
+                // current camera position instead of the "behind player" fallback.
+                var manifestPosition = _cameraPos ?? position;
+                _game.SetGhostPosition(manifestPosition);
+                ok = _game.Manifest(manifestPosition, args.Duration ?? 6f);
                 if (ok)
                 {
                     _scares++;
                     AddChaos(12f);
                     SendEvent("manifest_start", new Dictionary<string, object?>
                     {
-                        ["x"] = position.X,
-                        ["y"] = position.Y,
-                        ["z"] = position.Z,
+                        ["x"] = manifestPosition.X,
+                        ["y"] = manifestPosition.Y,
+                        ["z"] = manifestPosition.Z,
                     });
                 }
                 break;
+            }
 
             case "whisper":
             {
