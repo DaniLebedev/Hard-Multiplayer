@@ -1,6 +1,7 @@
 using BepInEx.Logging;
 using HardMultiplayer.Protocol;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 using PVector3 = HardMultiplayer.Protocol.Vec3;
@@ -35,10 +36,12 @@ internal sealed class FlickerEffect
 
 /// <summary>
 /// Thin, defensive wrapper around the game's IL2CPP types. Every Unity call is
-/// made from the Unity main thread (GhostDirector.Update).
+/// made from the Unity main thread (GhostDirector.Tick, driven by a Harmony patch).
 /// </summary>
 internal sealed class GameBridge
 {
+    private const float PreviewLifetime = 1.6f;
+
     private readonly ManualLogSource _log;
 
     private readonly Dictionary<IntPtr, int> _enemyIds = new();
@@ -55,6 +58,14 @@ internal sealed class GameBridge
     private float _manifestEndsAt;
     private PVector3? _ghostPos;
     private float _overlayClearAt;
+
+    private GameObject? _previewRoot;
+    private Material? _previewMaterial;
+    private string _previewKey = "";
+    private string _previewAbility = "";
+    private float _previewUntil;
+    private PVector3 _previewPos = new();
+    private PVector3 _previewDir = new(0f, 0f, 1f);
 
     private float _lastErrorAt;
     private string _lastError = "";
@@ -271,6 +282,296 @@ internal sealed class GameBridge
     }
 
     // -----------------------------------------------------------------------
+    // Intent preview (holograms)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Mirrors the ghost's aim into the world as a translucent hologram. The VR
+    /// player sees what the ghost is about to do before the ability is cast.
+    /// </summary>
+    public void SetPreview(Preview preview)
+    {
+        if (preview == null || !preview.Active || string.IsNullOrEmpty(preview.Ability) || preview.Pos == null)
+        {
+            ClearPreview();
+            return;
+        }
+
+        var ability = preview.Ability;
+        if (ability != "spawn_enemy" &&
+            ability != "throw_barrel" &&
+            ability != "telekinesis" &&
+            ability != "poltergeist")
+        {
+            ClearPreview();
+            return;
+        }
+
+        var key = ability + ":" + (preview.Kind ?? "");
+        if (_previewRoot == null || key != _previewKey)
+        {
+            BuildPreview(ability, preview.Kind ?? "grunt");
+        }
+
+        _previewUntil = Time.time + PreviewLifetime;
+
+        var x = preview.Pos.X;
+        var z = preview.Pos.Z;
+        var y = SnapToGround(x, preview.Pos.Y, z);
+        _previewPos = new PVector3(x, y, z);
+        _previewDir = NormalizeDirection(preview.Dir);
+        UpdatePreviewTransform();
+    }
+
+    public void ClearPreview()
+    {
+        if (_previewRoot != null)
+        {
+            try
+            {
+                Object.Destroy(_previewRoot);
+            }
+            catch
+            {
+                // ignore
+            }
+            _previewRoot = null;
+        }
+
+        if (_previewMaterial != null)
+        {
+            try
+            {
+                Object.Destroy(_previewMaterial);
+            }
+            catch
+            {
+                // ignore
+            }
+            _previewMaterial = null;
+        }
+
+        _previewKey = "";
+        _previewAbility = "";
+        _previewUntil = 0f;
+    }
+
+    private void BuildPreview(string ability, string kind)
+    {
+        ClearPreview();
+
+        try
+        {
+            var color = PreviewColor(ability);
+            _previewRoot = new GameObject("HardMultiplayer_Preview");
+            _previewRoot.transform.position = ToVector3(_previewPos);
+            _previewMaterial = CreateHologramMaterial(color);
+            _previewAbility = ability;
+            _previewKey = ability + ":" + kind;
+
+            AddPreviewRing();
+
+            switch (ability)
+            {
+                case "spawn_enemy":
+                    AddPreviewCapsule(new UVector3(0f, 0.9f, 0f), new UVector3(0.5f, 0.9f, 0.5f));
+                    break;
+
+                case "throw_barrel":
+                    AddPreviewCylinder(new UVector3(0f, 0.55f, 0f), new UVector3(0.35f, 0.55f, 0.35f));
+                    AddPreviewArrow();
+                    break;
+
+                case "telekinesis":
+                case "poltergeist":
+                    AddPreviewDiamond(new UVector3(0f, 0.9f, 0f), new UVector3(0.4f, 0.4f, 0.4f));
+                    break;
+            }
+
+            UpdatePreviewTransform();
+        }
+        catch (Exception ex)
+        {
+            LogThrottled("preview", ex);
+            ClearPreview();
+        }
+    }
+
+    private void AddPreviewRing()
+    {
+        var ring = AddPreviewPart(
+            PrimitiveType.Cylinder,
+            new UVector3(0f, 0.02f, 0f),
+            new UVector3(1.2f, 0.015f, 1.2f),
+            Quaternion.identity);
+        if (ring != null)
+        {
+            ring.name = "Ring";
+        }
+    }
+
+    private void AddPreviewCapsule(UVector3 localPos, UVector3 localScale)
+    {
+        AddPreviewPart(PrimitiveType.Capsule, localPos, localScale, Quaternion.identity);
+    }
+
+    private void AddPreviewCylinder(UVector3 localPos, UVector3 localScale)
+    {
+        AddPreviewPart(PrimitiveType.Cylinder, localPos, localScale, Quaternion.identity);
+    }
+
+    private void AddPreviewDiamond(UVector3 localPos, UVector3 localScale)
+    {
+        var rotation = Quaternion.Euler(0f, 45f, 45f);
+        AddPreviewPart(PrimitiveType.Cube, localPos, localScale, rotation);
+    }
+
+    private void AddPreviewArrow()
+    {
+        // Shaft along local +Z, then two chevron wings at the tip.
+        AddPreviewPart(
+            PrimitiveType.Cube,
+            new UVector3(0f, 0.7f, 3f),
+            new UVector3(0.09f, 0.09f, 6f),
+            Quaternion.identity);
+
+        AddPreviewPart(
+            PrimitiveType.Cube,
+            new UVector3(0.22f, 0.7f, 5.75f),
+            new UVector3(0.08f, 0.08f, 0.9f),
+            Quaternion.Euler(0f, 32f, 0f));
+
+        AddPreviewPart(
+            PrimitiveType.Cube,
+            new UVector3(-0.22f, 0.7f, 5.75f),
+            new UVector3(0.08f, 0.08f, 0.9f),
+            Quaternion.Euler(0f, -32f, 0f));
+    }
+
+    private GameObject? AddPreviewPart(
+        PrimitiveType type,
+        UVector3 localPos,
+        UVector3 localScale,
+        Quaternion localRotation)
+    {
+        if (_previewRoot == null) return null;
+
+        var go = GameObject.CreatePrimitive(type);
+        go.name = "Part";
+
+        var collider = go.GetComponent<Collider>();
+        if (collider != null) Object.Destroy(collider);
+
+        var transform = go.transform;
+        transform.SetParent(_previewRoot.transform, false);
+        transform.localPosition = localPos;
+        transform.localScale = localScale;
+        transform.localRotation = localRotation;
+
+        var renderer = go.GetComponent<MeshRenderer>();
+        if (renderer != null)
+        {
+            if (_previewMaterial != null) renderer.sharedMaterial = _previewMaterial;
+            renderer.shadowCastingMode = ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+        }
+
+        return go;
+    }
+
+    private void UpdatePreviewTransform()
+    {
+        if (_previewRoot == null) return;
+
+        _previewRoot.transform.position = ToVector3(_previewPos);
+
+        if (_previewAbility == "throw_barrel")
+        {
+            var dir = new UVector3(_previewDir.X, 0f, _previewDir.Z);
+            if (dir.sqrMagnitude > 0.0001f)
+            {
+                _previewRoot.transform.rotation = Quaternion.LookRotation(dir.normalized, UVector3.up);
+            }
+        }
+        else
+        {
+            _previewRoot.transform.rotation = Quaternion.identity;
+        }
+    }
+
+    private static Color PreviewColor(string ability)
+    {
+        return ability switch
+        {
+            "spawn_enemy" => new Color(1f, 0.36f, 0.36f, 0.34f),
+            "throw_barrel" => new Color(1f, 0.7f, 0.28f, 0.34f),
+            "telekinesis" => new Color(0.49f, 0.83f, 0.99f, 0.3f),
+            "poltergeist" => new Color(0.75f, 0.52f, 0.99f, 0.3f),
+            _ => new Color(0.6f, 0.85f, 1f, 0.3f),
+        };
+    }
+
+    private Material CreateHologramMaterial(Color color)
+    {
+        // Clone the material that Unity assigns to primitives. This guarantees a
+        // shader that actually exists in the player build (URP Lit in Hard Bullet).
+        var probe = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        Material material;
+        try
+        {
+            var renderer = probe.GetComponent<MeshRenderer>();
+            material = renderer != null && renderer.sharedMaterial != null
+                ? new Material(renderer.sharedMaterial)
+                : new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        }
+        finally
+        {
+            Object.Destroy(probe);
+        }
+
+        ConfigureHologramMaterial(material, color);
+        return material;
+    }
+
+    private static void ConfigureHologramMaterial(Material material, Color color)
+    {
+        try
+        {
+            if (material.HasProperty("_Surface")) material.SetFloat("_Surface", 1f);
+            if (material.HasProperty("_Blend")) material.SetFloat("_Blend", 0f);
+            if (material.HasProperty("_SrcBlend")) material.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+            if (material.HasProperty("_DstBlend"))
+                material.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+            if (material.HasProperty("_ZWrite")) material.SetFloat("_ZWrite", 0f);
+
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.renderQueue = 3000;
+
+            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
+            if (material.HasProperty("_Color")) material.SetColor("_Color", color);
+            if (material.HasProperty("_EmissionColor"))
+            {
+                material.EnableKeyword("_EMISSION");
+                material.SetColor("_EmissionColor", color * 0.7f);
+            }
+        }
+        catch
+        {
+            // A missing property on an unknown shader is not worth crashing over.
+        }
+    }
+
+    private static PVector3 NormalizeDirection(PVector3? dir)
+    {
+        if (dir == null) return new PVector3(0f, 0f, 1f);
+
+        var length = Mathf.Sqrt(dir.X * dir.X + dir.Z * dir.Z);
+        if (length < 0.0001f) return new PVector3(0f, 0f, 1f);
+
+        return new PVector3(dir.X / length, 0f, dir.Z / length);
+    }
+
+    // -----------------------------------------------------------------------
     // Abilities
     // -----------------------------------------------------------------------
 
@@ -338,7 +639,7 @@ internal sealed class GameBridge
         }
     }
 
-    public bool ThrowBarrel(PVector3 position, float? fuse)
+    public bool ThrowBarrel(PVector3 position, PVector3 direction, float speed, float? fuse)
     {
         try
         {
@@ -356,18 +657,28 @@ internal sealed class GameBridge
             if (prefab == null) return false;
 
             var pos = ToVector3(position);
+            var horizontal = new UVector3(direction.X, 0f, direction.Z);
+            if (horizontal.sqrMagnitude < 0.0001f) horizontal = UVector3.forward;
+            horizontal.Normalize();
+
+            var velocity = horizontal * Mathf.Clamp(speed, 4f, 30f) + UVector3.up * 2.2f;
+            var rotation = Quaternion.LookRotation(horizontal, UVector3.up);
 
             try
             {
-                var clone = Object.Instantiate(prefab, pos, Quaternion.identity);
+                var clone = Object.Instantiate(prefab, pos, rotation);
                 if (clone != null)
                 {
                     clone.transform.position = pos;
+
                     var body = clone.GetComponent<Rigidbody>();
-                    if (body != null && !body.isKinematic)
+                    if (body != null)
                     {
-                        body.linearVelocity = new UVector3(0f, -1f, 0f);
+                        body.isKinematic = false;
+                        body.linearVelocity = velocity;
+                        body.angularVelocity = new UVector3(3f, 1.2f, 2.4f);
                     }
+
                     clone.Trigger();
                     return true;
                 }
@@ -378,6 +689,12 @@ internal sealed class GameBridge
             }
 
             prefab.transform.position = pos;
+            var fallbackBody = prefab.GetComponent<Rigidbody>();
+            if (fallbackBody != null)
+            {
+                fallbackBody.isKinematic = false;
+                fallbackBody.linearVelocity = velocity;
+            }
             prefab.Trigger();
             return true;
         }
@@ -544,7 +861,7 @@ internal sealed class GameBridge
         return affected;
     }
 
-    public bool Whisper(string text)
+    public bool ShowOverlay(string text)
     {
         try
         {
@@ -555,7 +872,7 @@ internal sealed class GameBridge
         }
         catch (Exception ex)
         {
-            LogThrottled("whisper", ex);
+            LogThrottled("overlay", ex);
             return false;
         }
     }
@@ -574,7 +891,12 @@ internal sealed class GameBridge
             var renderer = go.GetComponent<MeshRenderer>();
             if (renderer != null)
             {
-                renderer.material.color = new Color(0.78f, 0.9f, 1f, 1f);
+                var material = new Material(renderer.sharedMaterial);
+                if (material.HasProperty("_BaseColor"))
+                    material.SetColor("_BaseColor", new Color(0.78f, 0.9f, 1f, 1f));
+                if (material.HasProperty("_Color"))
+                    material.SetColor("_Color", new Color(0.78f, 0.9f, 1f, 1f));
+                renderer.sharedMaterial = material;
             }
 
             var light = go.AddComponent<Light>();
@@ -645,6 +967,19 @@ internal sealed class GameBridge
             }
         }
 
+        if (_previewRoot != null)
+        {
+            if (now >= _previewUntil)
+            {
+                ClearPreview();
+            }
+            else
+            {
+                var pulse = 1f + Mathf.Sin(now * 6f) * 0.03f;
+                _previewRoot.transform.localScale = new UVector3(pulse, pulse, pulse);
+            }
+        }
+
         if (_manifestGo != null)
         {
             if (now >= _manifestEndsAt)
@@ -662,6 +997,8 @@ internal sealed class GameBridge
 
     public void Cleanup()
     {
+        ClearPreview();
+
         if (_manifestGo != null)
         {
             try
@@ -705,11 +1042,46 @@ internal sealed class GameBridge
     {
         try
         {
-            var origin = new UVector3(x, y + 25f, z);
-            if (Physics.Raycast(origin, UVector3.down, out var hit, 60f, ~0, QueryTriggerInteraction.Ignore))
+            // Start close above the aim point: a high origin can hit a roof and
+            // snap the hologram onto the ceiling instead of the floor.
+            var origin = new UVector3(x, y + 2f, z);
+            var hits = Physics.RaycastAll(
+                origin,
+                UVector3.down,
+                60f,
+                ~0,
+                QueryTriggerInteraction.Ignore);
+
+            Transform? player = null;
+            try
             {
-                return hit.point.y + 0.05f;
+                if (PlayerRoot.IsInitialized && PlayerRoot.Instance != null)
+                {
+                    player = PlayerRoot.Instance.transform;
+                }
             }
+            catch
+            {
+                // ignore
+            }
+
+            var best = float.MaxValue;
+            var bestY = y;
+            var found = false;
+
+            for (var i = 0; i < hits.Length; i++)
+            {
+                var hit = hits[i];
+                if (hit.collider == null) continue;
+                if (player != null && hit.collider.transform.IsChildOf(player)) continue;
+                if (hit.distance >= best) continue;
+
+                best = hit.distance;
+                bestY = hit.point.y;
+                found = true;
+            }
+
+            if (found) return bestY + 0.05f;
         }
         catch (Exception ex)
         {
@@ -738,6 +1110,7 @@ internal sealed class GameBridge
         var maxX = playerPos.X + 20f;
         var minZ = playerPos.Z - 20f;
         var maxZ = playerPos.Z + 20f;
+        var floorY = playerPos.Y;
 
         try
         {
@@ -771,11 +1144,14 @@ internal sealed class GameBridge
                 walls.Add(new MapWall
                 {
                     X = center.x,
+                    Y = center.y,
                     Z = center.z,
                     W = size.x,
-                    D = size.z,
                     H = size.y,
+                    D = size.z,
                 });
+
+                floorY = Mathf.Min(floorY, bounds.min.y);
 
                 minX = Mathf.Min(minX, center.x - size.x * 0.5f);
                 maxX = Mathf.Max(maxX, center.x + size.x * 0.5f);
@@ -798,6 +1174,7 @@ internal sealed class GameBridge
                 MaxX = maxX + 4f,
                 MaxZ = maxZ + 4f,
             },
+            FloorY = floorY,
             Walls = walls,
             Image = null,
         };

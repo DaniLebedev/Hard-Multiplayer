@@ -41,6 +41,10 @@
       <HintPath>$(CoreDir)\BepInEx.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(CoreDir)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="BepInEx.Unity.IL2CPP">
       <HintPath>$(CoreDir)\BepInEx.Unity.IL2CPP.dll</HintPath>
       <Private>false</Private>

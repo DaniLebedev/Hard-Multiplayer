@@ -1,7 +1,6 @@
 using System.Text.Json;
 using BepInEx.Logging;
 using HardMultiplayer.Protocol;
-using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
 using PVector3 = HardMultiplayer.Protocol.Vec3;
 using PPing = HardMultiplayer.Protocol.Ping;
@@ -9,10 +8,11 @@ using PPing = HardMultiplayer.Protocol.Ping;
 namespace HardMultiplayer;
 
 /// <summary>
-/// The main-thread half of the mod: owns authoritative energy/cooldowns/chaos,
-/// turns ghost commands into game actions, and publishes snapshots at a fixed rate.
+/// The main-thread half of the mod: owns authoritative energy/cooldowns,
+/// turns ghost commands into game actions, mirrors ghost intent previews into
+/// the world, and publishes snapshots at a fixed rate.
 /// </summary>
-public sealed class GhostDirector : MonoBehaviour
+public sealed class GhostDirector
 {
     private Plugin _plugin = null!;
     private RelayClient _relay = null!;
@@ -20,7 +20,6 @@ public sealed class GhostDirector : MonoBehaviour
     private bool _ready;
 
     private float _energy;
-    private float _chaos;
     private readonly Dictionary<string, float> _cooldowns = new();
 
     private int _seq;
@@ -47,10 +46,6 @@ public sealed class GhostDirector : MonoBehaviour
     private int _barrels;
     private bool _announcedRoom;
 
-    public GhostDirector(IntPtr pointer) : base(pointer)
-    {
-    }
-
     internal void Initialize(Plugin plugin, RelayClient relay, GameBridge game)
     {
         _plugin = plugin;
@@ -58,14 +53,13 @@ public sealed class GhostDirector : MonoBehaviour
         _game = game;
 
         _energy = plugin.MaxEnergy.Value;
-        _chaos = 0f;
         _sessionStart = Time.time;
         _ready = true;
 
         _plugin.Log.LogInfo("GhostDirector готов. Жду подключения к relay.");
     }
 
-    private void Update()
+    public void Tick()
     {
         if (!_ready) return;
 
@@ -75,7 +69,6 @@ public sealed class GhostDirector : MonoBehaviour
         ProcessInbound();
 
         _energy = Mathf.Min(_plugin.MaxEnergy.Value, _energy + _plugin.EnergyRegen.Value * dt);
-        _chaos = Mathf.Max(0f, _chaos - _plugin.ChaosDecay.Value * dt);
 
         _game.UpdateEffects(now, out var manifestEnded);
         if (manifestEnded)
@@ -89,11 +82,15 @@ public sealed class GhostDirector : MonoBehaviour
             _relay.Send(new PPing { Ts = NowMs() });
         }
 
-        if (!_relay.Connected) return;
+        if (!_relay.Connected)
+        {
+            _game.ClearPreview();
+            return;
+        }
 
         if (!_announcedRoom && _game.TryGetPlayer(out _))
         {
-            if (_game.Whisper($"Hard Multiplayer · комната {_relay.Room}"))
+            if (_game.ShowOverlay($"Hard Multiplayer · комната {_relay.Room}"))
             {
                 _announcedRoom = true;
                 _plugin.Log.LogInfo($"Комната {_relay.Room} показана игроку.");
@@ -114,8 +111,9 @@ public sealed class GhostDirector : MonoBehaviour
         }
     }
 
-    private void OnDestroy()
+    public void Shutdown()
     {
+        _ready = false;
         try
         {
             _game?.Cleanup();
@@ -153,6 +151,21 @@ public sealed class GhostDirector : MonoBehaviour
                         if (command != null) HandleCommand(command);
                         break;
 
+                    case "preview":
+                        var preview = JsonSerializer.Deserialize<Preview>(json, RelayClient.JsonOptions);
+                        if (preview != null)
+                        {
+                            // Never keep a stale hologram alive while the ability
+                            // is on cooldown; the browser also stops sending it.
+                            var onCooldown = preview.Active &&
+                                             preview.Ability != null &&
+                                             _cooldowns.TryGetValue(preview.Ability, out var previewUntil) &&
+                                             previewUntil - Time.time > 0.05f;
+                            if (onCooldown) _game.ClearPreview();
+                            else _game.SetPreview(preview);
+                        }
+                        break;
+
                     case "error":
                         var error = JsonSerializer.Deserialize<ErrorMessage>(json, RelayClient.JsonOptions);
                         if (error != null)
@@ -183,7 +196,7 @@ public sealed class GhostDirector : MonoBehaviour
                         var chat = JsonSerializer.Deserialize<Chat>(json, RelayClient.JsonOptions);
                         if (chat != null && chat.From == "ghost")
                         {
-                            _game.Whisper(chat.Text);
+                            _game.ShowOverlay(chat.Text);
                         }
                         break;
 
@@ -248,12 +261,6 @@ public sealed class GhostDirector : MonoBehaviour
             return;
         }
 
-        if (ability.MinChaos > 0f && _chaos + 0.01f < ability.MinChaos)
-        {
-            SendAck(command.Id, false, "low_chaos");
-            return;
-        }
-
         var args = command.Args ?? new CmdArgs();
         var position = ResolvePosition(args);
         var ok = false;
@@ -267,7 +274,6 @@ public sealed class GhostDirector : MonoBehaviour
                 if (ok)
                 {
                     _spawns++;
-                    AddChaos(2f);
                     SendEvent("enemy_spawned", new Dictionary<string, object?>
                     {
                         ["kind"] = kind,
@@ -279,11 +285,12 @@ public sealed class GhostDirector : MonoBehaviour
             }
 
             case "throw_barrel":
-                ok = _game.ThrowBarrel(position, args.Fuse);
+            {
+                var dir = ResolveDirection(args);
+                ok = _game.ThrowBarrel(position, dir, args.Power ?? 14f, args.Fuse);
                 if (ok)
                 {
                     _barrels++;
-                    AddChaos(4f);
                     SendEvent("scare", new Dictionary<string, object?>
                     {
                         ["type"] = "barrel",
@@ -292,12 +299,12 @@ public sealed class GhostDirector : MonoBehaviour
                     });
                 }
                 break;
+            }
 
             case "telekinesis":
                 ok = _game.Telekinesis(position, args.TargetId, args.Power ?? 8f);
                 if (ok)
                 {
-                    AddChaos(1f);
                     SendEvent("scare", new Dictionary<string, object?>
                     {
                         ["type"] = "telekinesis",
@@ -312,7 +319,6 @@ public sealed class GhostDirector : MonoBehaviour
                 var lights = _game.Poltergeist(position, args.Duration ?? 3f);
                 ok = true;
                 _scares++;
-                AddChaos(5f);
                 SendEvent("scare", new Dictionary<string, object?>
                 {
                     ["type"] = "poltergeist",
@@ -333,7 +339,6 @@ public sealed class GhostDirector : MonoBehaviour
                 if (ok)
                 {
                     _scares++;
-                    AddChaos(12f);
                     SendEvent("manifest_start", new Dictionary<string, object?>
                     {
                         ["x"] = manifestPosition.X,
@@ -343,20 +348,11 @@ public sealed class GhostDirector : MonoBehaviour
                 }
                 break;
             }
-
-            case "whisper":
-            {
-                var text = string.IsNullOrWhiteSpace(args.Text) ? "Не оглядывайся…" : args.Text.Trim();
-                if (text.Length > 180) text = text[..180];
-                ok = _game.Whisper(text);
-                if (ok)
-                {
-                    AddChaos(1f);
-                    SendEvent("scare", new Dictionary<string, object?> { ["type"] = "whisper" });
-                }
-                break;
-            }
         }
+
+        // Any cast consumes the intent hologram, even if the game API refused it.
+        // Otherwise a failed spawn could leave the barrel arrow on screen.
+        _game.ClearPreview();
 
         if (!ok)
         {
@@ -382,12 +378,10 @@ public sealed class GhostDirector : MonoBehaviour
 
     private PVector3 ResolvePosition(CmdArgs args)
     {
-        var distance = Mathf.Clamp(args.Distance ?? 6f, 2f, 16f);
-
         if (_game.TryGetPlayer(out var player))
         {
-            var x = args.X ?? (player.Pos.X - player.Forward.X * distance);
-            var z = args.Z ?? (player.Pos.Z - player.Forward.Z * distance);
+            var x = args.X ?? player.Pos.X;
+            var z = args.Z ?? player.Pos.Z;
             var y = args.Y ?? player.Pos.Y;
             y = _game.SnapToGround(x, y, z);
             return new PVector3(x, y, z);
@@ -396,9 +390,17 @@ public sealed class GhostDirector : MonoBehaviour
         return new PVector3(args.X ?? 0f, args.Y ?? 0f, args.Z ?? 0f);
     }
 
-    private void AddChaos(float amount)
+    private PVector3 ResolveDirection(CmdArgs args)
     {
-        _chaos = Mathf.Clamp(_chaos + amount, 0f, 100f);
+        var x = args.DirX ?? Mathf.Sin(_cameraYaw);
+        var z = args.DirZ ?? Mathf.Cos(_cameraYaw);
+        var length = Mathf.Sqrt(x * x + z * z);
+        if (length < 0.0001f)
+        {
+            return new PVector3(Mathf.Sin(_cameraYaw), 0f, Mathf.Cos(_cameraYaw));
+        }
+
+        return new PVector3(x / length, 0f, z / length);
     }
 
     private void SendAck(string id, bool ok, string? error, float cooldown = 0f)
@@ -527,10 +529,26 @@ public sealed class GhostDirector : MonoBehaviour
         var ghostYaw = _cameraYaw;
         if (ghostPos == null && hasPlayer)
         {
+            // The player's forward vector is not always populated (for example
+            // in the intro scene), so fall back to the player's yaw.
+            var fx = player.Forward.X;
+            var fz = player.Forward.Z;
+            var forwardLength = Mathf.Sqrt(fx * fx + fz * fz);
+            if (forwardLength < 0.01f)
+            {
+                fx = Mathf.Sin(player.Yaw);
+                fz = Mathf.Cos(player.Yaw);
+            }
+            else
+            {
+                fx /= forwardLength;
+                fz /= forwardLength;
+            }
+
             ghostPos = new PVector3(
-                player.Pos.X - player.Forward.X * 3f,
-                player.Pos.Y,
-                player.Pos.Z - player.Forward.Z * 3f);
+                player.Pos.X - fx * 3f,
+                player.Pos.Y + 1.6f,
+                player.Pos.Z - fz * 3f);
             ghostYaw = player.Yaw;
         }
 
@@ -558,7 +576,6 @@ public sealed class GhostDirector : MonoBehaviour
             Props = props,
             Energy = _energy,
             MaxEnergy = _plugin.MaxEnergy.Value,
-            Chaos = _chaos,
             Cooldowns = cooldowns,
             Stats = new Stats
             {

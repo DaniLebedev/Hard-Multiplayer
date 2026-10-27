@@ -3,6 +3,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
 
 namespace HardMultiplayer;
 
@@ -15,6 +16,10 @@ public sealed class Plugin : BasePlugin
 
     internal static Plugin Instance { get; private set; } = null!;
 
+    internal GhostDirector? Director { get; private set; }
+
+    private Harmony? _harmony;
+
     public ConfigEntry<bool> Enabled = null!;
     public ConfigEntry<string> RelayUrl = null!;
     public ConfigEntry<string> Room = null!;
@@ -23,7 +28,6 @@ public sealed class Plugin : BasePlugin
     public ConfigEntry<float> SnapshotHz = null!;
     public ConfigEntry<float> MaxEnergy = null!;
     public ConfigEntry<float> EnergyRegen = null!;
-    public ConfigEntry<float> ChaosDecay = null!;
 
     private RelayClient? _relay;
 
@@ -85,14 +89,6 @@ public sealed class Plugin : BasePlugin
                 "Сколько энергии восстанавливается в секунду.",
                 new AcceptableValueRange<float>(0f, 50f)));
 
-        ChaosDecay = Config.Bind(
-            "Tuning",
-            "ChaosDecay",
-            1.5f,
-            new ConfigDescription(
-                "Насколько быстро успокаивается хаос (единиц в секунду).",
-                new AcceptableValueRange<float>(0f, 20f)));
-
         if (!Enabled.Value)
         {
             Log.LogInfo("Hard Multiplayer выключен в конфиге.");
@@ -119,8 +115,15 @@ public sealed class Plugin : BasePlugin
         try
         {
             var bridge = new GameBridge(Log);
-            var director = AddComponent<GhostDirector>();
-            director.Initialize(this, _relay, bridge);
+            Director = new GhostDirector();
+            Director.Initialize(this, _relay, bridge);
+
+            // BepInEx 6 + Unity 6 currently crashes inside ClassInjector, so the
+            // mod must not inject managed MonoBehaviour types. Tick the director
+            // from an existing per-frame game method instead.
+            _harmony = new Harmony(Guid);
+            _harmony.PatchAll(typeof(Plugin).Assembly);
+
             _relay.Start();
 
             Log.LogInfo("Hard Multiplayer загружен.");
@@ -131,11 +134,24 @@ public sealed class Plugin : BasePlugin
         {
             Log.LogError($"Не удалось запустить Hard Multiplayer: {ex}");
             _relay = null;
+            Director = null;
+            _harmony = null;
         }
+    }
+
+    internal void Tick()
+    {
+        Director?.Tick();
     }
 
     public override bool Unload()
     {
+        Director?.Shutdown();
+        Director = null;
+
+        _harmony?.UnpatchSelf();
+        _harmony = null;
+
         _relay?.Stop();
         _relay = null;
         return true;

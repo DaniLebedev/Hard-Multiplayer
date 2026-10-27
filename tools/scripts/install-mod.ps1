@@ -45,6 +45,35 @@ try {
     Copy-Item $dll (Join-Path $plugins "HardMultiplayer.dll") -Force
     Write-Host "Плагин установлен: $(Join-Path $plugins 'HardMultiplayer.dll')" -ForegroundColor Green
 
+    # BepInEx 6.0.0-be.791 падает на Unity 6000.5.8f1, когда устанавливает
+    # свой Unity-логгер через ClassInjector. Отключаем этот логгер: мод пишет
+    # через BepInEx и сам перехватывает исключения.
+    $bepinexCfg = Join-Path $GameDir "BepInEx\config\BepInEx.cfg"
+    $bepInExDir = Split-Path -Parent $bepinexCfg
+    New-Item -ItemType Directory -Force $bepInExDir | Out-Null
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    if (-not (Test-Path $bepinexCfg)) {
+        [IO.File]::WriteAllText($bepinexCfg, "[Logging]`r`nUnityLogListening = false`r`n", $utf8)
+        Write-Host "Создан BepInEx.cfg: UnityLogListening = false (обход краша на Unity 6)." -ForegroundColor Yellow
+    } else {
+        $bepText = [IO.File]::ReadAllText($bepinexCfg)
+        if ($bepText -match '(?m)^\s*UnityLogListening\s*=') {
+            if ($bepText -match '(?m)^\s*UnityLogListening\s*=\s*true') {
+                $bepText = $bepText -replace '(?m)^\s*UnityLogListening\s*=\s*true\s*$', 'UnityLogListening = false'
+                [IO.File]::WriteAllText($bepinexCfg, $bepText, $utf8)
+                Write-Host "Отключён UnityLogListening (обход краша на Unity 6)." -ForegroundColor Yellow
+            }
+        } elseif ($bepText -match '(?m)^\[Logging\]\s*$') {
+            $bepText = $bepText -replace '(?m)^\[Logging\]\s*$', "[Logging]`r`nUnityLogListening = false"
+            [IO.File]::WriteAllText($bepinexCfg, $bepText, $utf8)
+            Write-Host "Добавлен UnityLogListening = false (обход краша на Unity 6)." -ForegroundColor Yellow
+        } else {
+            $bepText = $bepText.TrimEnd() + "`r`n`r`n[Logging]`r`nUnityLogListening = false`r`n"
+            [IO.File]::WriteAllText($bepinexCfg, $bepText, $utf8)
+            Write-Host "Добавлен UnityLogListening = false (обход краша на Unity 6)." -ForegroundColor Yellow
+        }
+    }
+
     if (-not $SkipConfig) {
         $configDir = Join-Path $GameDir "BepInEx\config"
         $config = Join-Path $configDir "hardmultiplayer.ghost.cfg"

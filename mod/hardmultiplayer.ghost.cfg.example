@@ -48,9 +48,3 @@ MaxEnergy = 100
 # Default value: 6
 # Acceptable values: 0 - 50
 EnergyRegen = 6
-
-## Насколько быстро успокаивается хаос (единиц в секунду).
-# Setting type: Single
-# Default value: 1.5
-# Acceptable values: 0 - 20
-ChaosDecay = 1.5
