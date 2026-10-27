@@ -94,7 +94,7 @@
 - [x] `docs/TROUBLESHOOTING.md` — диагностика по слоям.
 - [x] `tools/scripts/` — сборка, установка мода, relay, mock-game, ghost dev, setup interop.
 - [x] `relay/.env.example` и `mod/hardmultiplayer.ghost.cfg.example`.
-- [ ] `git init` и логичные коммиты по частям.
+- [x] `git init` и логичные коммиты по частям.
 
 ### Фаза 6. Полировка (следующее)
 
