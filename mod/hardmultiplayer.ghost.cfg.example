@@ -1,0 +1,56 @@
+[General]
+
+## Включить мост Hard Multiplayer. Если выключено, мод только пишет сообщение в лог.
+# Setting type: Boolean
+# Default value: true
+Enabled = true
+
+[Relay]
+
+## WebSocket-адрес relay-сервера.
+## Локально: ws://127.0.0.1:8080/ws
+## Через интернет: wss://ghost.example.com/ws
+# Setting type: String
+# Default value: ws://127.0.0.1:8080/ws
+Url = ws://127.0.0.1:8080/ws
+
+## Код комнаты (4-8 символов A-Z/0-9). Друг вводит этот же код в браузере.
+# Setting type: String
+# Default value: TEST
+Room = TEST
+
+## Необязательный токен игры. Должен совпадать с RELAY_TOKEN на relay-сервере.
+# Setting type: String
+# Default value:
+Token =
+
+## Имя, которое игра показывает остальным участникам комнаты.
+# Setting type: String
+# Default value: Призрак
+Name = Призрак
+
+[Tuning]
+
+## Сколько раз в секунду игра отправляет состояние призраку.
+# Setting type: Single
+# Default value: 10
+# Acceptable values: 1 - 30
+SnapshotHz = 10
+
+## Максимальный запас энергии призрака.
+# Setting type: Single
+# Default value: 100
+# Acceptable values: 20 - 500
+MaxEnergy = 100
+
+## Сколько энергии восстанавливается в секунду.
+# Setting type: Single
+# Default value: 6
+# Acceptable values: 0 - 50
+EnergyRegen = 6
+
+## Насколько быстро успокаивается хаос (единиц в секунду).
+# Setting type: Single
+# Default value: 1.5
+# Acceptable values: 0 - 20
+ChaosDecay = 1.5
