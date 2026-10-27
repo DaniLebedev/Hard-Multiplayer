@@ -91,7 +91,22 @@ dotnet .\interop-cli\net6.0\Il2CppInterop.CLI.dll generate `
 - dummy DLL неполные — перегенерируй Cpp2IL;
 - не хватило памяти — закрой лишние процессы, попробуй `--no-parallel`.
 
-### 1.6. Плагин не загружается
+### 1.6. `Interop assemblies are possibly out of date`
+
+Это предупреждение BepInEx, а не ошибка: он сравнивает хэш interop-сборок с ожидаемым.
+Если interop только что сгенерирован вручную, хэш просто неизвестен. Чтобы убрать
+предупреждение, создай файл `BepInEx\interop\assembly-hash.txt` с хэшем из лога:
+
+```powershell
+Set-Content `
+  "D:\SteamLibrary\steamapps\common\Hard Bullet\bin\BepInEx\interop\assembly-hash.txt" `
+  "1035a9ef2283168562ea60d1e9cead90"
+```
+
+Хэш бери именно из своего лога — после обновления игры или BepInEx он изменится. Если
+игра действительно обновилась, не подавляй предупреждение, а перегенерируй interop.
+
+### 1.7. Плагин не загружается
 
 В `LogOutput.log` ищи:
 
@@ -110,7 +125,7 @@ dotnet .\interop-cli\net6.0\Il2CppInterop.CLI.dll generate `
 Если есть `Class::Init signatures have been exhausted, using a substitute!` — это
 предупреждение, не ошибка. Плагин может работать.
 
-### 1.7. Ошибка сборки `CS0656: Missing compiler required member ... NullableAttribute`
+### 1.8. Ошибка сборки `CS0656: Missing compiler required member ... NullableAttribute`
 
 Это коллизия nullable-атрибутов в сгенерированных interop-сборках. В проекте уже есть
 `mod\NullableAttributes.cs` и `<Nullable>disable</Nullable>`. Если ошибка появилась
@@ -121,7 +136,7 @@ dotnet .\interop-cli\net6.0\Il2CppInterop.CLI.dll generate `
 - проверь, что `NullableAttributes.cs` включён в компиляцию (он лежит в `mod\` и
   подхватывается SDK по умолчанию).
 
-### 1.8. `dotnet build` не находит `Assembly-CSharp.dll`
+### 1.9. `dotnet build` не находит `Assembly-CSharp.dll`
 
 `GameDir` указывает не туда. Нужна папка `bin`, где лежат `Hard Bullet.exe`,
 `GameAssembly.dll` и `BepInEx\interop`. Проверь:
@@ -131,7 +146,7 @@ dotnet build .\mod\HardMultiplayer.csproj -c Release `
   -p:GameDir="D:\SteamLibrary\steamapps\common\Hard Bullet\bin"
 ```
 
-### 1.9. Мод загрузился, но карта не приходит
+### 1.10. Мод загрузился, но карта не приходит
 
 Смотри `LogOutput.log`:
 
