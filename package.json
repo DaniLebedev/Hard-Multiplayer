@@ -12,7 +12,7 @@
   "scripts": {
     "dev:relay": "npm --workspace relay run dev",
     "dev:ghost": "npm --workspace ghost-app run dev",
-    "dev:mock": "npm --workspace mock-game run start",
+    "dev:mock": "npm --workspace mock-game run start --",
     "build": "npm --workspace ghost-app run build && npm --workspace relay run typecheck",
     "start": "npm --workspace relay run start",
     "typecheck": "npm --workspace relay run typecheck && npm --workspace ghost-app run typecheck"
