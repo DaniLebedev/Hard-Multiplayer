@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#05070c" />
+    <meta name="description" content="Hard Multiplayer — консоль призрака для асимметричного мультиплеера в Hard Bullet" />
+    <title>Hard Multiplayer — Ghost Console</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="brand-text">
+            <div class="brand-title">HARD MULTIPLAYER</div>
+            <div class="brand-sub">GHOST CONSOLE <b>v1</b></div>
+          </div>
+        </div>
+
+        <div class="topbar-mid">
+          <div class="chip">
+            <span class="chip-label">КОМНАТА</span>
+            <span class="chip-value mono" id="room-code">----</span>
+          </div>
+          <div class="chip status" id="status-chip">
+            <span class="status-dot"></span>
+            <span class="chip-value" id="status-text">ОФЛАЙН</span>
+          </div>
+          <div class="chip">
+            <span class="chip-label">PING</span>
+            <span class="chip-value mono" id="latency">—</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <button class="icon-btn" id="sound-btn" title="Звук" aria-label="Звук">♪</button>
+          <button class="icon-btn" id="help-btn" title="Управление" aria-label="Управление">?</button>
+          <button class="icon-btn danger" id="leave-btn" title="Выйти" aria-label="Выйти">⏻</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="map-panel">
+          <canvas id="map" aria-label="Тактическая карта"></canvas>
+
+          <div class="map-top">
+            <div class="scene-badge">
+              <span class="scene-label">СЦЕНА</span>
+              <span class="scene-name" id="scene-name">—</span>
+            </div>
+            <div class="map-actions">
+              <button class="mini-btn" id="reset-view" title="Сбросить вид">СБРОС ВИДА</button>
+            </div>
+          </div>
+
+          <div class="map-bottom">
+            <div class="map-hint" id="map-hint">
+              <span><b>ЛКМ</b> применить</span>
+              <span><b>ПКМ</b> панорама</span>
+              <span><b>Колесо</b> зум</span>
+              <span><b>WASD</b> движение</span>
+            </div>
+            <div class="aim-readout mono" id="aim-readout">X — · Z —</div>
+          </div>
+
+          <div class="player-vitals">
+            <div class="vitals-head">
+              <span>ИГРОК</span>
+              <span class="mono" id="player-hp-text">—</span>
+            </div>
+            <div class="bar hp"><i id="player-hp"></i></div>
+          </div>
+
+          <div class="no-map" id="no-map">
+            <div class="no-map-icon">◇</div>
+            <div class="no-map-title">ОЖИДАНИЕ КАРТЫ</div>
+            <div class="no-map-sub">Запусти игру с модом или mock-game</div>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="panel energy-panel">
+            <div class="panel-head">
+              <span>ЭНЕРГИЯ</span>
+              <span class="mono" id="energy-text">— / —</span>
+            </div>
+            <div class="bar energy"><i id="energy-bar"></i></div>
+            <div class="panel-head">
+              <span>ХАОС</span>
+              <span class="mono" id="chaos-text">0%</span>
+            </div>
+            <div class="bar chaos"><i id="chaos-bar"></i></div>
+          </section>
+
+          <section class="panel stats-panel">
+            <div class="stat"><b id="stat-spawns">0</b><span>СПАВНОВ</span></div>
+            <div class="stat"><b id="stat-barrels">0</b><span>БОЧЕК</span></div>
+            <div class="stat"><b id="stat-scares">0</b><span>ИСПУГОВ</span></div>
+            <div class="stat"><b id="stat-kills">0</b><span>УБИЙСТВ</span></div>
+          </section>
+
+          <section class="panel log-panel">
+            <div class="panel-head">
+              <span>ЖУРНАЛ</span>
+              <span class="mono" id="session-time">00:00</span>
+            </div>
+            <div class="log" id="log" role="log" aria-live="polite"></div>
+          </section>
+
+          <section class="panel ghost-panel">
+            <div class="panel-head">
+              <span>ПРИЗРАК</span>
+              <span class="ghost-state" id="ghost-state">СКРЫТ</span>
+            </div>
+            <div class="ghost-grid">
+              <label class="field">
+                <span>Тип врага</span>
+                <select id="enemy-kind"></select>
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="behind-toggle" />
+                <span class="switch-track"><i></i></span>
+                <span class="switch-text">За спиной</span>
+              </label>
+              <label class="field wide">
+                <span>Шёпот</span>
+                <input id="whisper-text" maxlength="120" placeholder="фраза для игрока..." autocomplete="off" />
+              </label>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="ability-dock">
+        <div class="ability-list" id="ability-list"></div>
+        <div class="cast-row">
+          <div class="cast-info">
+            <div class="cast-name" id="cast-name">—</div>
+            <div class="cast-desc" id="cast-desc">—</div>
+          </div>
+          <button class="cast-btn" id="cast-btn">
+            <span>ПРИМЕНИТЬ</span>
+            <kbd>Space</kbd>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="assertive"></div>
+
+    <div class="overlay" id="lobby">
+      <div class="lobby-card">
+        <div class="lobby-kicker">АСИММЕТРИЧНЫЙ МУЛЬТИПЛЕЕР</div>
+        <h1>СТАНЬ ПРИЗРАКОМ</h1>
+        <p class="lobby-lead">
+          Друг играет в Hard Bullet в VR. Ты управляешь призраком с телефона или ноутбука:
+          спавнишь врагов за спиной, роняешь бочки и пугаешь его.
+        </p>
+
+        <form id="lobby-form" class="lobby-form">
+          <label class="field">
+            <span>Твоё имя</span>
+            <input id="lobby-name" maxlength="24" placeholder="Призрак" autocomplete="nickname" />
+          </label>
+          <label class="field">
+            <span>Код комнаты</span>
+            <div class="room-row">
+              <input
+                id="lobby-room"
+                class="mono room-input"
+                maxlength="8"
+                placeholder="ABCD"
+                autocapitalize="characters"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button type="button" class="ghost-btn" id="new-room">НОВАЯ</button>
+            </div>
+          </label>
+          <button type="submit" class="primary-btn" id="lobby-connect">
+            <span>ПОДКЛЮЧИТЬСЯ</span>
+            <span class="arrow">→</span>
+          </button>
+          <div class="lobby-error" id="lobby-error"></div>
+        </form>
+
+        <div class="lobby-note">
+          <span class="lobby-note-dot"></span>
+          Код комнаты показан в игре. Игра сама подключается к relay — порты на ПК открывать не нужно.
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="help">
+      <div class="help-card">
+        <button class="close-btn" id="help-close" aria-label="Закрыть">×</button>
+        <div class="lobby-kicker">ПАМЯТКА</div>
+        <h2>УПРАВЛЕНИЕ</h2>
+        <div class="help-grid">
+          <div><kbd>1</kbd>–<kbd>6</kbd></div><div>Выбрать способность</div>
+          <div><kbd>Space</kbd></div><div>Применить в точку прицела</div>
+          <div><kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>6</kbd></div><div>Применить сразу</div>
+          <div><kbd>ЛКМ</kbd></div><div>Применить в точку на карте</div>
+          <div><kbd>ПКМ</kbd> + перетаскивание</div><div>Панорама карты</div>
+          <div><kbd>Колесо</kbd></div><div>Зум</div>
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Движение призрака</div>
+          <div><kbd>Q</kbd><kbd>E</kbd></div><div>Поворот призрака</div>
+          <div><kbd>R</kbd></div><div>Сбросить вид</div>
+          <div><kbd>Esc</kbd></div><div>Сбросить прицел</div>
+          <div><kbd>M</kbd></div><div>Звук вкл/выкл</div>
+        </div>
+        <div class="help-tip">
+          Призрак невидим. Энергия восстанавливается со временем, хаос растёт от испугов.
+          Манифестация делает тебя видимым — это рискованно.
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
