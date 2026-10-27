@@ -5,6 +5,7 @@
 | Симптом | Слой | Куда смотреть |
 | --- | --- | --- |
 | Игра закрывается сразу после запуска | Игра / OpenXR | `Player.log` |
+| `AccessViolationException` в `ClassInjector` | BepInEx / Unity 6.5 | раздел 1.11 |
 | В логе нет `Hard Multiplayer загружен` | BepInEx / мод | `BepInEx\LogOutput.log` |
 | Клиент призрака не открывается | Relay / статика | `http://<host>:8080/health` |
 | Клиент открывается, но нет карты | Комната / мод | статус в шапке, журнал |
@@ -38,7 +39,8 @@ XR_ERROR_FORM_FACTOR_UNAVAILABLE
 - есть `winhttp.dll`, `doorstop_config.ini`, `BepInEx\core`;
 - антивирус не удалил `winhttp.dll` (иногда Doorstop ложно считается угрозой);
 - игра запускается из Steam, а не через сторонний лаунчер, который подменяет рабочую
-  папку.
+  папку;
+- в `BepInEx\config\BepInEx.cfg` стоит `UnityLogListening = false` (см. 1.11).
 
 В `BepInEx\LogOutput.log` должна быть строка вида:
 
@@ -122,8 +124,9 @@ Set-Content `
   interop-сборки. Проверь, что `Assembly-CSharp.dll`, `UnityEngine.CoreModule.dll`,
   `Il2Cppmscorlib.dll` есть в `BepInEx\interop`.
 
-Если есть `Class::Init signatures have been exhausted, using a substitute!` — это
-предупреждение, не ошибка. Плагин может работать.
+Строка `Class::Init signatures have been exhausted, using a substitute!` сама по себе —
+предупреждение. Но на Unity 6.5 она часто идёт рядом с падением в ClassInjector. Если игра
+закрывается сразу после неё, проверь `UnityLogListening = false` и раздел 1.11.
 
 ### 1.8. Ошибка сборки `CS0656: Missing compiler required member ... NullableAttribute`
 
@@ -161,6 +164,29 @@ dotnet build .\mod\HardMultiplayer.csproj -c Release `
 - `ScanMap` кидает исключение — ищи `Hard Multiplayer API error (map: ...)`.
 
 Карта пересчитывается при смене сцены. В меню она может быть пустой — это нормально.
+
+### 1.11. `AccessViolationException` в `Il2CppInterop...ClassInjector`
+
+Симптомы:
+
+- `LogOutput.log` заканчивается на `Chainloader initialized` и
+  `Class::Init signatures have been exhausted, using a substitute!`;
+- в `ErrorLog.log` есть `Fatal error. System.AccessViolationException` в
+  `Il2CppInterop.Runtime.Injection.Hooks.MetadataCache_GetTypeInfoFromTypeDefinitionIndex_Hook`
+  или `ClassInjector.RegisterTypeInIl2Cpp`;
+- игра закрывается до загрузки плагинов.
+
+Это не ошибка мода, а несовместимость BepInEx `6.0.0-be.791` с Unity `6000.5.8f1`.
+Лечение:
+
+```ini
+[Logging]
+UnityLogListening = false
+```
+
+Скрипт `tools/scripts/install-mod.ps1` выставляет это сам. После правки перезапусти игру.
+Мод специально не добавляет собственные MonoBehaviour и тикает из Harmony-патча, поэтому
+после отключения логгера ClassInjector больше не вызывается.
 
 ## 2. Relay
 
@@ -234,7 +260,7 @@ curl http://127.0.0.1:8080/api/rooms/TEST
 ### 2.6. `protocol_mismatch`
 
 Версии не совпадают. Обнови одновременно relay, `ghost-app` и мод. Версия должна быть
-`1` в `shared/ts/protocol.ts`, `shared/csharp/Protocol.cs` и в собранных артефактах.
+`2` в `shared/ts/protocol.ts`, `shared/csharp/Protocol.cs` и в собранных артефактах.
 
 ### 2.7. `no_game`
 
@@ -289,7 +315,6 @@ curl http://127.0.0.1:8080/api/rooms/TEST
 | `Нет соединения с relay` | Проверь relay и статус. |
 | `Перезарядка: N с` | Подожди; кулдаун общий для всех призраков. |
 | `Не хватает энергии` | Подожди восстановления (6/с). |
-| `Нужен хаос 15%` | Сделай несколько действий, чтобы поднять хаос. |
 | `no_game` | Игра не в комнате. |
 | `failed` | Игровой API не смог: нет префаба бочки, объект исчез, сцена не готова. Смотри лог мода. |
 
@@ -309,9 +334,9 @@ curl http://127.0.0.1:8080/api/rooms/TEST
 
 ### 3.6. На телефоне неудобно
 
-Клиент адаптивен, но управление рассчитано на клавиатуру и мышь. На телефоне доступны
-клики по карте и карточкам; WASD/QE заменяются на кнопки только частично. Для игры
-лучше ноутбук.
+Клиент адаптивен, но управление рассчитано на клавиатуру и мышь: свободный полёт, мышиный
+обзор и ЛКМ. На телефоне доступны клики по карточкам и кнопка «Применить», но полноценно
+играть лучше с ноутбука.
 
 ## 4. Мод в игре
 
@@ -325,10 +350,13 @@ curl http://127.0.0.1:8080/api/rooms/TEST
 EnemyFactory.GetProduct не сработал: ...
 ```
 
+В intro-сцене фабрика может быть не инициализирована — это нормально. Проверяй спавн на
+полноценном уровне.
+
 ### 4.2. Бочка не появляется
 
 Мод ищет существующую `ExplodingBarrel` в сцене и клонирует её. Если в сцене нет ни
-одной бочки, `ThrowBarrel` вернёт `false`. Это ограничение v1: нет глобального префаба
+одной бочки, `ThrowBarrel` вернёт `false`. Это ограничение v2: нет глобального префаба
 бочки. В сценах с бочками работает.
 
 ### 4.3. Полтергейст ничего не делает
@@ -347,14 +375,31 @@ EnemyFactory.GetProduct не сработал: ...
 - если камера ещё не отправлялась, используется позиция за игроком.
 
 Сфера — это `Sphere` с `MeshRenderer` и `Light`. Если материалы сцены переопределяют
-рендер, видимость может отличаться. В v1 это заглушка, а не полноценная модель.
+рендер, видимость может отличаться. В v2 это заглушка, а не полноценная модель.
 
-### 4.5. Шёпот не появляется
+### 4.5. Голограмма preview не появляется
 
-`PlayerTextOverlay` может быть не активен в меню. В игровой сцене текст показывается на
-4 секунды. Если игрок умер/загружается, оверлей может быть скрыт.
+Проверь по порядку:
 
-### 4.6. Игра тормозит после долгой сессии
+1. В браузере выбрана способность из preview-набора (1–4) и прицел попал в пол/стену.
+2. В журнале клиента идут `preview`-сообщения (DevTools → Network → WS).
+3. Мод получил preview: в `LogOutput.log` нет ошибок `preview`.
+4. Игрок находится в игровой сцене, а не в меню.
+5. Голограмма могла истечь: мод убирает её через 1.6 с без нового preview.
+
+Голограмма — это примитивы Unity с прозрачным материалом. В очень тёмной сцене она может
+быть плохо видна; это не ошибка сети.
+
+### 4.6. Стрелка у бочки не исчезает
+
+Стрелка — часть `HardMultiplayer_Preview`. После любого каста мод вызывает
+`ClearPreview()`, поэтому она должна исчезнуть вместе с голограммой. Если стрелка осталась:
+
+- каст не дошёл до мода (`ack failed` или `no_game`);
+- мод не получил `preview active=false`;
+- проверь лог на ошибку `preview` и повтори каст.
+
+### 4.7. Игра тормозит после долгой сессии
 
 Проверь:
 
@@ -394,7 +439,7 @@ Get-NetTCPConnection -LocalPort 8080
 `/health` возвращает:
 
 ```json
-{ "ok": true, "protocol": 1, "rooms": 1, "peers": 2, "uptime": 143 }
+{ "ok": true, "protocol": 2, "rooms": 1, "peers": 2, "uptime": 143 }
 ```
 
 ## 6. Полный сброс
@@ -405,7 +450,7 @@ Get-NetTCPConnection -LocalPort 8080
 2. Удали `BepInEx\interop` и `BepInEx\plugins\HardMultiplayer.dll`.
 3. Перегенерируй interop по [`SETUP.md`](SETUP.md#4-interop-для-unity-65--metadata-v107).
 4. Пересобери мод.
-5. Убедись, что `UpdateInteropAssemblies = false`.
+5. Убедись, что `UpdateInteropAssemblies = false` и `UnityLogListening = false`.
 6. Запусти relay, проверь `/health`.
 7. Запусти игру, проверь `Hard Multiplayer загружен` и код комнаты.
 8. Подключи клиента, проверь карту и снапшоты.

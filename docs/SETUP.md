@@ -59,8 +59,21 @@ npm install
 4. Запусти игру один раз. BepInEx создаст `BepInEx\config\BepInEx.cfg` и папки
    `BepInEx\plugins`, `BepInEx\interop`, `BepInEx\unity-libs`.
 
-   Без подключённого шлема игра закроется на инициализации OpenXR — это нормально,
+   Без подключённого шлема игра может закрыться на инициализации OpenXR — это нормально,
    конфиги и логи при этом уже создаются.
+
+5. **Обязательно** отключи Unity-логгер BepInEx. На Unity `6000.5.8f1` BepInEx
+   `6.0.0-be.791` падает в `ClassInjector` ещё до загрузки плагинов, если этот логгер
+   включён. В `BepInEx\config\BepInEx.cfg`:
+
+   ```ini
+   [Logging]
+   UnityLogListening = false
+   ```
+
+   Скрипт `tools/scripts/install-mod.ps1` выставляет это автоматически. Если оставить
+   `true`, в `ErrorLog.log` будет `AccessViolationException` в
+   `Il2CppInterop.Runtime.Injection.ClassInjector`, а игра закроется без загрузки мода.
 
 > Внешний `Hard Bullet.exe` в корне папки игры — это WPF-лаунчер. Он запускает
 > `bin\Hard Bullet.exe` с `-openxr` или `-openvr`. BepInEx должен лежать именно в `bin`.
@@ -165,6 +178,10 @@ dotnet build .\mod\HardMultiplayer.csproj -c Release `
 ```
 
 После сборки `HardMultiplayer.dll` автоматически копируется в `BepInEx\plugins`.
+Мод не добавляет собственные MonoBehaviour: на Unity 6.5 BepInEx ClassInjector крашит
+игру. Вместо этого `Patches.cs` ставит Harmony-postfix на `PlayerRoot.Update` и вызывает
+`GhostDirector.Tick()`; `0Harmony.dll` уже входит в BepInEx.
+
 Проверь:
 
 ```powershell
@@ -200,7 +217,6 @@ Copy-Item .\mod\hardmultiplayer.ghost.cfg.example `
 | `Tuning` | `SnapshotHz` | `10` | Частота снапшотов, 1–30. |
 | `Tuning` | `MaxEnergy` | `100` | Максимум энергии, 20–500. |
 | `Tuning` | `EnergyRegen` | `6` | Восстановление энергии в секунду. |
-| `Tuning` | `ChaosDecay` | `1.5` | Затухание хаоса в секунду. |
 
 Для игры через интернет:
 
@@ -331,7 +347,7 @@ cloudflared tunnel --url http://127.0.0.1:8080
 
 ## 9. Разработка без VR (mock-game)
 
-Mock-game притворяется игрой и говорит на протоколе v1.
+Mock-game притворяется игрой и говорит на протоколе v2.
 
 ```powershell
 # терминал 1: relay
@@ -346,8 +362,8 @@ npm run dev:ghost
 ```
 
 Открой `http://127.0.0.1:5173/?room=TEST` (Vite) или `http://127.0.0.1:8080/` (собранный
-клиент). Mock-game симулирует игрока, врагов, бочки, энергию, хаос и кулдауны, поэтому
-можно проверять способности и интерфейс без шлема.
+клиент). Mock-game симулирует игрока, врагов, бочки, энергию, кулдауны и 3D-карту, поэтому
+можно проверять полёт, preview и способности без шлема.
 
 Перед запуском настоящей игры **останови mock-game**, иначе в комнате `TEST` уже будет
 игра и мод получит `room_full`. Либо используй разные коды комнат.
@@ -359,7 +375,7 @@ npm run dev:ghost
 1. Проверь версию Unity и metadata в `Player.log` / `global-metadata.dat`.
 2. Перегенерируй dummy DLL и interop (раздел 4). Старые interop-сборки могут не
    совпасть с новыми сигнатурами.
-3. Оставь `UpdateInteropAssemblies = false`.
+3. Оставь `UpdateInteropAssemblies = false` и `UnityLogListening = false`.
 4. Пересобери мод.
 5. Проверь `BepInEx\LogOutput.log` на ошибки загрузки плагина.
 

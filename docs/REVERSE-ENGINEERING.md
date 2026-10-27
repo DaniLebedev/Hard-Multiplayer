@@ -269,8 +269,8 @@ PlayerTextOverlay.SetText(string)
 PlayerTextOverlay.ClearText()
 ```
 
-Используется для шёпота и показа кода комнаты. Текст живёт 4 секунды, затем мод вызывает
-`ClearText()`.
+Используется для показа кода комнаты и сообщений чата. Текст живёт 4 секунды, затем мод
+вызывает `ClearText()`.
 
 ### 9.5. Unity-обёртки
 
@@ -294,21 +294,42 @@ SceneManager.GetActiveScene().name
 
 По имени сцены мод понимает, что пора пересчитать карту.
 
-## 10. Инъекция MonoBehaviour
+## 10. ClassInjector и Harmony-тик
 
-`GhostDirector` — managed-класс, унаследованный от `MonoBehaviour`, с конструктором
-`IntPtr`:
+Изначально `GhostDirector` был managed-классом, унаследованным от `MonoBehaviour`, и
+добавлялся через `BasePlugin.AddComponent<T>()`. На Unity `6000.5.8f1` это падает:
 
-```csharp
-public GhostDirector(IntPtr pointer) : base(pointer) { }
+```
+Fatal error. System.AccessViolationException
+  at Il2CppInterop.Runtime.Injection.Hooks.MetadataCache_GetTypeInfoFromTypeDefinitionIndex_Hook.Hook(Int32)
+  at Il2CppSystem.Void..cctor()
+  at Il2CppInterop.Runtime.Injection.ClassInjector.RegisterTypeInIl2Cpp(...)
 ```
 
-BepInEx `BasePlugin.AddComponent<T>()` автоматически регистрирует такие типы через
-`ClassInjector`. Важное ограничение: `ClassInjector` инжектит только поля типов
-`Il2CppStringField`, `Il2CppReferenceField<T>`, `Il2CppValueField<T>`. Обычные managed-
-поля (`float`, `Dictionary<string,float>`, ссылки на другие managed-классы) остаются в
-managed-памяти и не участвуют в IL2CPP-сериализации. Поэтому в `GhostDirector` можно
-держать `_energy`, `_cooldowns`, `_game` и т.п. без `Il2Cpp*Field`.
+Причина — несовместимость Il2CppInterop из BepInEx `6.0.0-be.791` с этим билдом Unity.
+Дополнительно BepInEx сам вызывает ClassInjector для Unity-логгера, поэтому игра падает
+ещё до загрузки плагинов, если включён `Logging/UnityLogListening`.
+
+Рабочая схема:
+
+```ini
+[Logging]
+UnityLogListening = false
+```
+
+```csharp
+// Patches.cs
+[HarmonyPatch(typeof(PlayerRoot), nameof(PlayerRoot.Update))]
+internal static class PlayerRootUpdatePatch
+{
+    private static void Postfix() => Plugin.Instance?.Tick();
+}
+```
+
+`GhostDirector` — обычный managed-класс без `MonoBehaviour`. Harmony ставит native-detour
+на существующий метод игры и не требует инъекции managed-типов. Все Unity-вызовы
+по-прежнему идут с главного потока. Если BepInEx починят, тик можно вернуть в обычный
+`MonoBehaviour`.
 
 ## 11. Как исследовать дальше
 
