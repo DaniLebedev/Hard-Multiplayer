@@ -440,6 +440,11 @@ public sealed class GhostDirector
 
         if (changed)
         {
+            // The old camera position belongs to the previous scene; start the
+            // ghost from the player again until the browser sends a fresh one.
+            _game.ClearPreview();
+            _cameraPos = null;
+            _cameraYaw = 0f;
             SendEvent("scene_changed", new Dictionary<string, object?> { ["scene"] = scene });
         }
     }
